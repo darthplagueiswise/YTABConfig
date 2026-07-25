@@ -178,6 +178,13 @@ BOOL YTABSetRuntimeOverride(NSString *sourceClass, NSString *selector, BOOL valu
 BOOL YTABResetRuntimeOverride(NSString *sourceClass, NSString *selector, BOOL nativeValue) {
     (void)nativeValue;
     BOOL success = YTABCClearOverride(sourceClass, selector);
+    if (!success) {
+        NSString *fullKey = getKey(selector, sourceClass);
+        if ([defaults objectForKey:fullKey]) {
+            [defaults removeObjectForKey:fullKey];
+            success = YES;
+        }
+    }
     if (success) allKeysNeedsUpdate = YES;
     return success;
 }
