@@ -1,11 +1,12 @@
 Package: com.ps.ytabconfig
-Name: YTABConfig
-Version: 1.0.0
+Name: YTABConfig Feature Lab
+Version: 2.0.0
 Architecture: iphoneos-arm
-Description: Configures A/B features in iOS YouTube app.
-Maintainer: PoomSmart
-Author: PoomSmart
+Description: Afterglow Labs Feature Lab for reviewing experimental YouTube features.
+Maintainer: Afterglow Labs
+Author: PoomSmart (original YTABConfig); Afterglow Labs (Feature Lab maintenance)
 Section: Tweaks
 Depends: mobilesubstrate (>= 0.9.5000), firmware (>= 11.0)
-Depiction: https://poomsmart.github.io/repo/depictions/ytabconfig.html
-SileoDepiction: https://poomsmart.github.io/repo/sileodepictions/ytabconfig.json
+Homepage: https://github.com/afterglow-labs/YTABConfig
+Bugs: https://github.com/afterglow-labs/YTABConfig/issues
+Support: https://github.com/afterglow-labs/YTABConfig/discussions

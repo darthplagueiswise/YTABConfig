@@ -22,8 +22,8 @@
 "WARNING" = "Warning";
 "APPLY_DESC" = "This action will quit YouTube. Are you sure you want to continue?";
 
-"OPEN_MEGATHREAD" = "Open megathread";
-"OPEN_MEGATHREAD_DESC" = "Open YTABConfig megathread on GitHub where you can share and discuss the effect of each setting being enabled or disabled.";
+"OPEN_MEGATHREAD" = "Original project discussions";
+"OPEN_MEGATHREAD_DESC" = "Browse the original YTABConfig discussions by PoomSmart. For current Feature Lab support, visit the Afterglow Labs project page.";
 "SETTINGS_START_WITH" = "Settings starting with";
 
 // Clipboard

@@ -1,36 +1,31 @@
-# YTABConfig
+# YTABConfig Feature Lab
 
-Configures A/B settings in iOS YouTube app.
+YTABConfig Feature Lab is the maintained Afterglow Labs fork of YTABConfig for
+reviewing experimental YouTube features with clear, reversible choices. It is
+not a raw selector dump: unknown behavior stays marked for research instead of
+being presented as a promise.
 
-## Supported YouTube versions
+## Operational contract
 
-Confirmed version 16.29.4 and newer. Lower are either untested or unsupported.
+- Runs inside the iOS YouTube app; YouTube 16.29.4 and newer are the supported
+  baseline.
+- Uses the established `com.ps.ytabconfig` package identity and existing
+  `YTABC` preferences, so this 2.0.0 fork release upgrades without discarding
+  existing choices.
+- Apply changes only when you understand the setting; reset and restart
+  YouTube to return to the app's normal behavior.
+- Report support questions and verified findings in [Afterglow Labs
+  Discussions](https://github.com/afterglow-labs/YTABConfig/discussions), and
+  report defects through [GitHub Issues](https://github.com/afterglow-labs/YTABConfig/issues).
 
-## Machine-readable config catalog
+## Catalog workflow
 
-The extractor produces a versioned catalog of BOOL selectors recovered from a
-YouTube decompile. Its records keep
-definition evidence, optional callsites, and conservative native-default
-inference in separate fields. Generated records have mechanical titles and
-`null` summaries; only the small overlay in
-`catalog/curated/youtube-21.28.3.json` adds human metadata. A selector name is
-never expanded into a generated description.
-
-Full generated catalogs are intentionally ignored under `catalog/generated/`;
-they are reproducible analysis artifacts, not app payloads. The committed
-curated seed is the small metadata surface intended for app integration.
-
-The catalog and structured runtime export contracts are:
-
-- `catalog/schema/catalog-v1.schema.json`
-- `catalog/schema/runtime-export-v1.schema.json`
-
-Generate a catalog with an explicit timestamp so identical inputs produce
-byte-identical JSON:
+Raw Lab discovers the live flag list at runtime. The committed catalog contains
+only reviewed metadata; full decompile catalogs are generated on demand and are
+not shipped in the tweak.
 
 ```bash
-python3 tools/catalog_extractor.py \
-  "/path/to/YouTube_decompiled/C Files/YouTube (YT)" \
+python3 tools/catalog_extractor.py "/path/to/YouTube (YT)" \
   --youtube-version 21.28.3 \
   --generated-at 2026-07-25T00:00:00Z \
   --curated catalog/curated/youtube-21.28.3.json \
@@ -40,7 +35,6 @@ python3 tools/catalog_extractor.py \
   --include-callsites \
   --max-callsites 3 \
   --output catalog/generated/youtube-21.28.3.json
-```
 
 Definition extraction reads only `YTGlobalConfig.c`, `YTColdConfig.c`, and
 `YTHotConfig.c`. It reports recognized headers, BOOL candidates, and extracted
@@ -54,36 +48,19 @@ Curated overlays are version-bound. `Inferred` and `Verified` entries require a
 non-empty rationale and evidence IDs that exist on the extracted record. The
 committed seed remains `Unknown` until that binding is supplied.
 
-### Integration API
-
-The standalone modules do not import or modify tweak runtime/UI code:
-
-```python
-from tools.catalog_extractor import extract_catalog
-from tools.catalog_model import validate_catalog, validate_runtime_export
-from tools.report_provider import (
-    build_runtime_export,
-    import_runtime_export,
-    render_markdown_report,
-)
-```
-
-`build_runtime_export(catalog_records, youtube_version=..., tweak_version=...,
-exported_at=..., context=..., states=...)` accepts state entries keyed by
-`(class_name, selector)`. Each state may contain `native` (`True`, `False`, or
-`None`) and `override` (`inherit`, `force-on`, or `force-off`). The resulting
-record contains explicit `native`, `override`, and `effective` objects.
-
-`import_runtime_export(payload)` accepts JSON text, bytes, or a mapping,
-rejects oversized, duplicate-key, non-finite, unknown-field, or inconsistent
-state input, and returns a defensive copy.
-`render_markdown_report(document)` returns a stable category-sorted shareable
-report. Runtime integration can therefore capture selector values in Objective-C
-and pass the resulting state map to this provider without coupling catalog
-generation to hooks or settings UI.
-
 Run the dependency-free contract tests with:
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
+
+The schemas live under `catalog/schema/`. Unknown behavior stays unknown until
+runtime evidence supports a documented explanation.
+
+## Credits and license
+
+Original YTABConfig by PoomSmart.
+
+Afterglow Labs maintains this Feature Lab fork while preserving that
+attribution. This project remains licensed under the
+[GNU General Public License v3.0](LICENSE).
