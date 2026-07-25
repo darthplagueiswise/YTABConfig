@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 import json
+import math
+import re
 from datetime import datetime
 from typing import Any, Mapping, Sequence
 
@@ -29,8 +31,11 @@ RECORD_REQUIRED = {
     "status",
     "evidence",
     "callsites",
+    "callsiteSummary",
     "defaultInference",
     "verifiedVersions",
+    "curationEvidence",
+    "curationRationale",
 }
 
 
@@ -57,6 +62,17 @@ def _require_keys(value: Mapping[str, Any], keys: set[str], path: str) -> None:
     missing = sorted(keys - set(value))
     if missing:
         raise ContractError(f"{path} missing required field: {missing[0]}")
+    unsupported = sorted(set(value) - keys)
+    if unsupported:
+        raise ContractError(f"{path} contains unsupported field: {unsupported[0]}")
+
+
+def _require_required_keys(
+    value: Mapping[str, Any], keys: set[str], path: str
+) -> None:
+    missing = sorted(keys - set(value))
+    if missing:
+        raise ContractError(f"{path} missing required field: {missing[0]}")
 
 
 def _require_string(value: Any, path: str, *, allow_empty: bool = False) -> str:
@@ -72,19 +88,55 @@ def _require_bool_or_none(value: Any, path: str) -> None:
 
 def _require_timestamp(value: Any, path: str) -> None:
     text = _require_string(value, path)
+    if not re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})",
+        text,
+    ):
+        raise ContractError(f"{path} must be an RFC 3339 timestamp with timezone")
     try:
-        datetime.fromisoformat(text.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError as error:
         raise ContractError(f"{path} must be an RFC 3339 timestamp") from error
+    if parsed.utcoffset() is None:
+        raise ContractError(f"{path} must be an RFC 3339 timestamp with timezone")
+
+
+def _validate_json_value(value: Any, path: str, *, depth: int = 0) -> None:
+    if depth > 20:
+        raise ContractError(f"{path} exceeds maximum nesting depth")
+    if value is None or isinstance(value, (str, bool, int)):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ContractError(f"{path} must not contain a non-finite number")
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_json_value(item, f"{path}[{index}]", depth=depth + 1)
+        return
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            _require_string(key, f"{path} key")
+            _validate_json_value(item, f"{path}.{key}", depth=depth + 1)
+        return
+    raise ContractError(f"{path} must contain JSON-compatible values")
 
 
 def _validate_state(record: Mapping[str, Any], path: str, *, runtime: bool) -> None:
     native = _require_object(record.get("native"), f"{path}.native")
     _require_keys(native, {"value", "source", "capturedAt"}, f"{path}.native")
     _require_bool_or_none(native["value"], f"{path}.native.value")
-    _require_string(native["source"], f"{path}.native.source")
+    native_source = _require_string(native["source"], f"{path}.native.source")
     if native["capturedAt"] is not None:
         _require_timestamp(native["capturedAt"], f"{path}.native.capturedAt")
+    if runtime:
+        expected_native_source = "runtime" if native["value"] is not None else "unavailable"
+        if native_source != expected_native_source:
+            raise ContractError(f"{path}.native.source does not match runtime state")
+        if (native["capturedAt"] is None) != (native["value"] is None):
+            raise ContractError(f"{path}.native.capturedAt does not match runtime state")
+    elif native != {"value": None, "source": "unavailable", "capturedAt": None}:
+        raise ContractError(f"{path}.native must remain unavailable in a static catalog")
 
     override = _require_object(record.get("override"), f"{path}.override")
     _require_keys(override, {"mode", "value"}, f"{path}.override")
@@ -120,10 +172,14 @@ def _validate_state(record: Mapping[str, Any], path: str, *, runtime: bool) -> N
         )
         if effective["source"] != expected_source:
             raise ContractError(f"{path}.effective.source does not match runtime state")
+    elif effective != {"value": None, "source": "unavailable"}:
+        raise ContractError(f"{path}.effective must remain unavailable in a static catalog")
 
 
 def _validate_metadata(record: Mapping[str, Any], path: str) -> None:
-    _require_string(record.get("class"), f"{path}.class")
+    class_name = _require_string(record.get("class"), f"{path}.class")
+    if class_name not in {"YTColdConfig", "YTGlobalConfig", "YTHotConfig"}:
+        raise ContractError(f"{path}.class is invalid")
     _require_string(record.get("selector"), f"{path}.selector")
     _require_string(record.get("title"), f"{path}.title")
     if record.get("summary") is not None:
@@ -182,7 +238,31 @@ def _validate_catalog_record(record: Any, index: int) -> tuple[str, str]:
                     )
             if source["address"] is not None:
                 _require_string(source["address"], f"{evidence_path}.source.address")
+            if source["lineEnd"] < source["lineStart"]:
+                raise ContractError(f"{evidence_path}.source.lineEnd precedes lineStart")
             _require_string(evidence_item["excerpt"], f"{evidence_path}.excerpt")
+    callsite_summary = _require_object(
+        item["callsiteSummary"], f"{path}.callsiteSummary"
+    )
+    _require_keys(
+        callsite_summary,
+        {"observed", "stored", "truncated"},
+        f"{path}.callsiteSummary",
+    )
+    for count_field in ("observed", "stored"):
+        count = callsite_summary[count_field]
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            raise ContractError(
+                f"{path}.callsiteSummary.{count_field} must be non-negative"
+            )
+    if not isinstance(callsite_summary["truncated"], bool):
+        raise ContractError(f"{path}.callsiteSummary.truncated must be boolean")
+    if callsite_summary["stored"] != len(item["callsites"]):
+        raise ContractError(f"{path}.callsiteSummary.stored does not match callsites")
+    if callsite_summary["truncated"] != (
+        callsite_summary["stored"] < callsite_summary["observed"]
+    ):
+        raise ContractError(f"{path}.callsiteSummary.truncated is inconsistent")
     inference = item["defaultInference"]
     if inference is not None:
         inference_item = _require_object(inference, f"{path}.defaultInference")
@@ -198,6 +278,34 @@ def _validate_catalog_record(record: Any, index: int) -> tuple[str, str]:
         _require_string(inference_item["method"], f"{path}.defaultInference.method")
         if not isinstance(inference_item["evidence"], list):
             raise ContractError(f"{path}.defaultInference.evidence must be an array")
+        for reference in inference_item["evidence"]:
+            _require_string(reference, f"{path}.defaultInference.evidence[]")
+        definition_ids = {evidence["id"] for evidence in item["evidence"]}
+        if not inference_item["evidence"] or not set(
+            inference_item["evidence"]
+        ).issubset(definition_ids):
+            raise ContractError(
+                f"{path}.defaultInference.evidence must reference definition evidence"
+            )
+    if not isinstance(item["curationEvidence"], list):
+        raise ContractError(f"{path}.curationEvidence must be an array")
+    for reference in item["curationEvidence"]:
+        _require_string(reference, f"{path}.curationEvidence[]")
+    if item["curationRationale"] is not None:
+        _require_string(item["curationRationale"], f"{path}.curationRationale")
+    evidence_ids = {
+        evidence["id"] for field in ("evidence", "callsites") for evidence in item[field]
+    }
+    if not set(item["curationEvidence"]).issubset(evidence_ids):
+        raise ContractError(f"{path}.curationEvidence contains an unknown evidence id")
+    if item["status"] in {"Inferred", "Verified"} and (
+        not item["curationEvidence"] or item["curationRationale"] is None
+    ):
+        raise ContractError(f"{path} status requires curation evidence and rationale")
+    if item["status"] == "Unknown" and (
+        item["curationEvidence"] or item["curationRationale"] is not None
+    ):
+        raise ContractError(f"{path} Unknown status cannot claim curation evidence")
     return item["class"], item["selector"]
 
 
@@ -213,11 +321,88 @@ def validate_catalog(document: Any) -> Mapping[str, Any]:
     _require_string(root["youtubeVersion"], "catalog.youtubeVersion")
     _require_timestamp(root["generatedAt"], "catalog.generatedAt")
     source = _require_object(root["source"], "catalog.source")
-    _require_keys(source, {"kind", "root", "files"}, "catalog.source")
-    _require_string(source["kind"], "catalog.source.kind")
+    _require_keys(
+        source,
+        {"kind", "root", "files", "classCounts", "callsiteScan"},
+        "catalog.source",
+    )
+    if source["kind"] != "decompiler-c-files":
+        raise ContractError("catalog.source.kind is invalid")
     _require_string(source["root"], "catalog.source.root")
     if not isinstance(source["files"], list):
         raise ContractError("catalog.source.files must be an array")
+    for index, raw_file in enumerate(source["files"]):
+        file_path = f"catalog.source.files[{index}]"
+        source_file = _require_object(raw_file, file_path)
+        _require_keys(source_file, {"path", "sha256"}, file_path)
+        _require_string(source_file["path"], f"{file_path}.path")
+        if not isinstance(source_file["sha256"], str) or not re.fullmatch(
+            r"[0-9a-f]{64}", source_file["sha256"]
+        ):
+            raise ContractError(f"{file_path}.sha256 must be a lowercase SHA-256")
+    if not isinstance(source["classCounts"], list):
+        raise ContractError("catalog.source.classCounts must be an array")
+    counts_by_class: dict[str, Mapping[str, Any]] = {}
+    for index, raw_counts in enumerate(source["classCounts"]):
+        count_path = f"catalog.source.classCounts[{index}]"
+        counts = _require_object(raw_counts, count_path)
+        _require_keys(
+            counts,
+            {
+                "class",
+                "headers",
+                "candidates",
+                "extracted",
+                "minimum",
+                "expected",
+            },
+            count_path,
+        )
+        class_name = counts["class"]
+        if class_name not in {"YTColdConfig", "YTGlobalConfig", "YTHotConfig"}:
+            raise ContractError(f"{count_path}.class is invalid")
+        if class_name in counts_by_class:
+            raise ContractError(f"duplicate class count: {class_name}")
+        counts_by_class[class_name] = counts
+        for field in ("headers", "candidates", "extracted", "minimum"):
+            count = counts[field]
+            if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+                raise ContractError(f"{count_path}.{field} must be non-negative")
+        expected = counts["expected"]
+        if expected is not None and (
+            not isinstance(expected, int)
+            or isinstance(expected, bool)
+            or expected < 0
+        ):
+            raise ContractError(f"{count_path}.expected must be non-negative or null")
+        if counts["candidates"] > counts["headers"]:
+            raise ContractError(f"{count_path}.candidates exceeds headers")
+        if counts["extracted"] != counts["candidates"]:
+            raise ContractError(f"{count_path}.extracted must match candidates")
+        if counts["extracted"] < counts["minimum"]:
+            raise ContractError(f"{count_path}.extracted is below minimum")
+        if expected is not None and counts["extracted"] != expected:
+            raise ContractError(f"{count_path}.extracted does not match expected")
+    if set(counts_by_class) != {"YTColdConfig", "YTGlobalConfig", "YTHotConfig"}:
+        raise ContractError("catalog.source.classCounts must cover all config classes")
+    callsite_scan = _require_object(
+        source["callsiteScan"], "catalog.source.callsiteScan"
+    )
+    _require_keys(
+        callsite_scan,
+        {"enabled", "limitPerRecord"},
+        "catalog.source.callsiteScan",
+    )
+    if not isinstance(callsite_scan["enabled"], bool):
+        raise ContractError("catalog.source.callsiteScan.enabled must be boolean")
+    if (
+        not isinstance(callsite_scan["limitPerRecord"], int)
+        or isinstance(callsite_scan["limitPerRecord"], bool)
+        or callsite_scan["limitPerRecord"] < 0
+    ):
+        raise ContractError(
+            "catalog.source.callsiteScan.limitPerRecord must be non-negative"
+        )
     if not isinstance(root["records"], list):
         raise ContractError("catalog.records must be an array")
     keys: set[tuple[str, str]] = set()
@@ -226,6 +411,23 @@ def validate_catalog(document: Any) -> Mapping[str, Any]:
         if key in keys:
             raise ContractError(f"duplicate catalog record: {key[0]}.{key[1]}")
         keys.add(key)
+    actual_counts = {
+        class_name: sum(1 for record in root["records"] if record["class"] == class_name)
+        for class_name in counts_by_class
+    }
+    for class_name, counts in counts_by_class.items():
+        if counts["extracted"] != actual_counts[class_name]:
+            raise ContractError(
+                f"catalog.source.classCounts.{class_name} does not match records"
+            )
+    if not callsite_scan["enabled"]:
+        if any(record["callsiteSummary"]["observed"] for record in root["records"]):
+            raise ContractError("disabled callsite scan cannot report observed callsites")
+    if any(
+        record["callsiteSummary"]["stored"] > callsite_scan["limitPerRecord"]
+        for record in root["records"]
+    ):
+        raise ContractError("stored callsites exceed limitPerRecord")
     return root
 
 
@@ -248,7 +450,8 @@ def validate_runtime_export(document: Any) -> Mapping[str, Any]:
     _require_timestamp(root["exportedAt"], "runtimeExport.exportedAt")
     _require_string(root["youtubeVersion"], "runtimeExport.youtubeVersion")
     _require_string(root["tweakVersion"], "runtimeExport.tweakVersion")
-    _require_object(root["context"], "runtimeExport.context")
+    context = _require_object(root["context"], "runtimeExport.context")
+    _validate_json_value(context, "runtimeExport.context")
     if not isinstance(root["records"], list):
         raise ContractError("runtimeExport.records must be an array")
     keys: set[tuple[str, str]] = set()
@@ -283,6 +486,8 @@ def validate_runtime_export(document: Any) -> Mapping[str, Any]:
 def merge_curated(
     records: Sequence[Mapping[str, Any]],
     overlay: Mapping[str, Any] | None,
+    *,
+    youtube_version: str,
 ) -> list[dict[str, Any]]:
     merged = [copy.deepcopy(record) for record in records]
     if overlay is None:
@@ -295,6 +500,10 @@ def merge_curated(
     )
     if overlay_root["schemaVersion"] != SCHEMA_VERSION:
         raise ContractError(f"curated.schemaVersion must be {SCHEMA_VERSION}")
+    if overlay_root["youtubeVersion"] != youtube_version:
+        raise ContractError(
+            "curated.youtubeVersion does not match extracted youtubeVersion"
+        )
     if not isinstance(overlay_root["records"], list):
         raise ContractError("curated.records must be an array")
     by_key = {(item["class"], item["selector"]): item for item in merged}
@@ -307,11 +516,19 @@ def merge_curated(
         "dependencies",
         "conflicts",
         "verifiedVersions",
+        "curationEvidence",
+        "curationRationale",
     }
+    seen: set[tuple[str, str]] = set()
     for index, raw_patch in enumerate(overlay_root["records"]):
         patch = _require_object(raw_patch, f"curated.records[{index}]")
-        _require_keys(patch, {"class", "selector"}, f"curated.records[{index}]")
+        _require_required_keys(
+            patch, {"class", "selector"}, f"curated.records[{index}]"
+        )
         key = (patch["class"], patch["selector"])
+        if key in seen:
+            raise ContractError(f"duplicate curated record: {key[0]}.{key[1]}")
+        seen.add(key)
         if key not in by_key:
             raise ContractError(f"curated record not found in extraction: {key[0]}.{key[1]}")
         unknown = sorted(set(patch) - allowed - {"class", "selector"})
@@ -323,4 +540,21 @@ def merge_curated(
         for field in allowed:
             if field in patch:
                 by_key[key][field] = copy.deepcopy(patch[field])
+        if resulting_status in {"Inferred", "Verified"}:
+            references = by_key[key]["curationEvidence"]
+            rationale = by_key[key]["curationRationale"]
+            evidence_ids = {
+                evidence["id"]
+                for evidence_field in ("evidence", "callsites")
+                for evidence in by_key[key][evidence_field]
+            }
+            if (
+                not references
+                or rationale is None
+                or not set(references).issubset(evidence_ids)
+            ):
+                raise ContractError(
+                    "curated Inferred or Verified status requires valid evidence "
+                    "references and rationale"
+                )
     return sorted(merged, key=lambda item: (item["class"], item["selector"]))

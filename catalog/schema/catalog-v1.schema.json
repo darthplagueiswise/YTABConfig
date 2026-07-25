@@ -58,6 +58,17 @@
           },
           "type": "array"
         },
+        "classCounts": {
+          "items": {
+            "$ref": "#/$defs/classCount"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "callsiteScan": {
+          "$ref": "#/$defs/callsiteScan"
+        },
         "kind": {
           "const": "decompiler-c-files"
         },
@@ -69,7 +80,92 @@
       "required": [
         "kind",
         "root",
-        "files"
+        "files",
+        "classCounts",
+        "callsiteScan"
+      ],
+      "type": "object"
+    },
+    "classCount": {
+      "additionalProperties": false,
+      "properties": {
+        "class": {
+          "enum": [
+            "YTGlobalConfig",
+            "YTColdConfig",
+            "YTHotConfig"
+          ]
+        },
+        "headers": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "candidates": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "extracted": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "minimum": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "expected": {
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "class",
+        "headers",
+        "candidates",
+        "extracted",
+        "minimum",
+        "expected"
+      ],
+      "type": "object"
+    },
+    "callsiteScan": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "limitPerRecord": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "enabled",
+        "limitPerRecord"
+      ],
+      "type": "object"
+    },
+    "callsiteSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "observed": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stored": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "observed",
+        "stored",
+        "truncated"
       ],
       "type": "object"
     },
@@ -87,6 +183,7 @@
           "items": {
             "type": "string"
           },
+          "minItems": 1,
           "type": "array"
         },
         "method": {
@@ -166,9 +263,23 @@
       "properties": {
         "callsites": {
           "items": {
-            "$ref": "#/$defs/evidence"
+            "allOf": [
+              {
+                "$ref": "#/$defs/evidence"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "callsite"
+                  }
+                }
+              }
+            ]
           },
           "type": "array"
+        },
+        "callsiteSummary": {
+          "$ref": "#/$defs/callsiteSummary"
         },
         "category": {
           "minLength": 1,
@@ -208,11 +319,23 @@
         },
         "evidence": {
           "items": {
-            "$ref": "#/$defs/evidence"
+            "allOf": [
+              {
+                "$ref": "#/$defs/evidence"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "definition"
+                  }
+                }
+              }
+            ]
           },
           "type": "array"
         },
         "experimentID": {
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -247,9 +370,14 @@
           ]
         },
         "summary": {
-          "type": [
-            "string",
-            "null"
+          "oneOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "title": {
@@ -261,6 +389,24 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "curationEvidence": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "curationRationale": {
+          "oneOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -280,29 +426,69 @@
         "status",
         "evidence",
         "callsites",
+        "callsiteSummary",
         "defaultInference",
-        "verifiedVersions"
+        "verifiedVersions",
+        "curationEvidence",
+        "curationRationale"
       ],
-      "type": "object"
+      "type": "object",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "Inferred",
+                  "Verified"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "curationEvidence": {
+                "minItems": 1
+              },
+              "curationRationale": {
+                "minLength": 1,
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "Unknown"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "curationEvidence": {
+                "maxItems": 0
+              },
+              "curationRationale": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
     },
     "nativeState": {
       "additionalProperties": false,
       "properties": {
         "capturedAt": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "const": null
         },
         "source": {
-          "minLength": 1,
-          "type": "string"
+          "const": "unavailable"
         },
         "value": {
-          "type": [
-            "boolean",
-            "null"
-          ]
+          "const": null
         }
       },
       "required": [
@@ -316,17 +502,10 @@
       "additionalProperties": false,
       "properties": {
         "mode": {
-          "enum": [
-            "inherit",
-            "force-on",
-            "force-off"
-          ]
+          "const": "inherit"
         },
         "value": {
-          "type": [
-            "boolean",
-            "null"
-          ]
+          "const": null
         }
       },
       "required": [
@@ -339,17 +518,10 @@
       "additionalProperties": false,
       "properties": {
         "source": {
-          "enum": [
-            "native",
-            "override",
-            "unavailable"
-          ]
+          "const": "unavailable"
         },
         "value": {
-          "type": [
-            "boolean",
-            "null"
-          ]
+          "const": null
         }
       },
       "required": [

@@ -9,6 +9,7 @@ bool __cdecl -[YTColdConfig zebraFlag](YTColdConfig *self, SEL a2)
 {
   unsigned int v4;
   id v9;
+  experimentFlags(self);
   if ( hasExperimentFlags(self) )
   {
     if ( (v9 = objc_msgSend(self, "objectForKey:", 45789453)) != nullptr )

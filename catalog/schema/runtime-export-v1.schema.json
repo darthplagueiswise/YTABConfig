@@ -43,6 +43,7 @@
       "additionalProperties": false,
       "properties": {
         "capturedAt": {
+          "format": "date-time",
           "type": [
             "string",
             "null"
@@ -66,7 +67,48 @@
         "source",
         "capturedAt"
       ],
-      "type": "object"
+      "type": "object",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "const": "runtime"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "boolean"
+              },
+              "capturedAt": {
+                "format": "date-time",
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "const": "unavailable"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "null"
+              },
+              "capturedAt": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
     },
     "overrideState": {
       "additionalProperties": false,
@@ -89,12 +131,63 @@
         "mode",
         "value"
       ],
-      "type": "object"
+      "type": "object",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "inherit"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "force-on"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "force-off"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
     },
     "runtimeRecord": {
       "additionalProperties": false,
       "properties": {
         "category": {
+          "minLength": 1,
           "type": "string"
         },
         "class": {
@@ -122,6 +215,7 @@
           ]
         },
         "selector": {
+          "minLength": 1,
           "type": "string"
         },
         "status": {
@@ -132,12 +226,18 @@
           ]
         },
         "summary": {
-          "type": [
-            "string",
-            "null"
+          "oneOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "title": {
+          "minLength": 1,
           "type": "string"
         }
       },
@@ -153,7 +253,165 @@
         "risk",
         "status"
       ],
-      "type": "object"
+      "type": "object",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "override": {
+                "properties": {
+                  "mode": {
+                    "const": "force-on"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "effective": {
+                "properties": {
+                  "source": {
+                    "const": "override"
+                  },
+                  "value": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "override": {
+                "properties": {
+                  "mode": {
+                    "const": "force-off"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "effective": {
+                "properties": {
+                  "source": {
+                    "const": "override"
+                  },
+                  "value": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "override": {
+                "properties": {
+                  "mode": {
+                    "const": "inherit"
+                  }
+                }
+              },
+              "native": {
+                "properties": {
+                  "value": {
+                    "const": null
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "effective": {
+                "properties": {
+                  "source": {
+                    "const": "unavailable"
+                  },
+                  "value": {
+                    "const": null
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "override": {
+                "properties": {
+                  "mode": {
+                    "const": "inherit"
+                  }
+                }
+              },
+              "native": {
+                "properties": {
+                  "value": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "effective": {
+                "properties": {
+                  "source": {
+                    "const": "native"
+                  },
+                  "value": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "override": {
+                "properties": {
+                  "mode": {
+                    "const": "inherit"
+                  }
+                }
+              },
+              "native": {
+                "properties": {
+                  "value": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "effective": {
+                "properties": {
+                  "source": {
+                    "const": "native"
+                  },
+                  "value": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "valueSource": {
       "additionalProperties": false,

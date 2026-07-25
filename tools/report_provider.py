@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import html
 import json
 from typing import Any, Mapping, Sequence
 
@@ -10,6 +11,9 @@ try:
     from tools.catalog_model import SCHEMA_VERSION, validate_runtime_export
 except ModuleNotFoundError:
     from catalog_model import SCHEMA_VERSION, validate_runtime_export
+
+
+MAX_IMPORT_BYTES = 10 * 1024 * 1024
 
 
 def _state_label(value: bool | None) -> str:
@@ -90,10 +94,33 @@ def build_runtime_export(
 
 
 def import_runtime_export(payload: str | bytes | Mapping[str, Any]) -> dict[str, Any]:
+    def reject_constant(value: str) -> None:
+        raise ValueError(f"invalid JSON constant: {value}")
+
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON key: {key}")
+            result[key] = value
+        return result
+
     if isinstance(payload, bytes):
-        parsed = json.loads(payload.decode("utf-8"))
+        if len(payload) > MAX_IMPORT_BYTES:
+            raise ValueError("runtime export exceeds maximum size")
+        parsed = json.loads(
+            payload.decode("utf-8"),
+            parse_constant=reject_constant,
+            object_pairs_hook=unique_object,
+        )
     elif isinstance(payload, str):
-        parsed = json.loads(payload)
+        if len(payload.encode("utf-8")) > MAX_IMPORT_BYTES:
+            raise ValueError("runtime export exceeds maximum size")
+        parsed = json.loads(
+            payload,
+            parse_constant=reject_constant,
+            object_pairs_hook=unique_object,
+        )
     elif isinstance(payload, Mapping):
         parsed = copy.deepcopy(dict(payload))
     else:
@@ -104,14 +131,20 @@ def import_runtime_export(payload: str | bytes | Mapping[str, Any]) -> dict[str,
     return parsed
 
 
+def _markdown_text(value: str, *, table: bool = False) -> str:
+    flattened = " ".join(value.split())
+    escaped = html.escape(flattened, quote=False)
+    return escaped.replace("|", "\\|") if table else escaped
+
+
 def render_markdown_report(document: Mapping[str, Any]) -> str:
     validate_runtime_export(document)
     lines = [
         "# YTABConfig Runtime Report",
         "",
-        f"- YouTube: {document['youtubeVersion']}",
-        f"- Tweak: {document['tweakVersion']}",
-        f"- Exported: {document['exportedAt']}",
+        f"- YouTube: {_markdown_text(document['youtubeVersion'])}",
+        f"- Tweak: {_markdown_text(document['tweakVersion'])}",
+        f"- Exported: {_markdown_text(document['exportedAt'])}",
         "",
     ]
     categories: dict[str, list[Mapping[str, Any]]] = {}
@@ -122,10 +155,10 @@ def render_markdown_report(document: Mapping[str, Any]) -> str:
         "force-on": "Force On",
         "force-off": "Force Off",
     }
-    for category in sorted(categories, key=str.casefold):
+    for category in sorted(categories, key=lambda item: (item.casefold(), item)):
         lines.extend(
             [
-                f"## {category}",
+                f"## {_markdown_text(category)}",
                 "",
                 "| Setting | Override | Effective | Risk |",
                 "| --- | --- | --- | --- |",
@@ -143,7 +176,7 @@ def render_markdown_report(document: Mapping[str, Any]) -> str:
                 "| "
                 + " | ".join(
                     (
-                        record["title"].replace("|", "\\|"),
+                        _markdown_text(record["title"], table=True),
                         override_labels[record["override"]["mode"]],
                         _state_label(record["effective"]["value"]),
                         record["risk"],

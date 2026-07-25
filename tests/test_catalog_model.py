@@ -28,8 +28,11 @@ def minimal_record():
         "status": "Unknown",
         "evidence": [],
         "callsites": [],
+        "callsiteSummary": {"observed": 0, "stored": 0, "truncated": False},
         "defaultInference": None,
         "verifiedVersions": [],
+        "curationEvidence": [],
+        "curationRationale": None,
     }
 
 
@@ -38,12 +41,44 @@ def minimal_catalog():
         "schemaVersion": 1,
         "youtubeVersion": "21.28.3",
         "generatedAt": "2026-07-25T00:00:00Z",
-        "source": {"kind": "decompiler-c-files", "root": ".", "files": []},
+        "source": {
+            "kind": "decompiler-c-files",
+            "root": ".",
+            "files": [{"path": "YTColdConfig.c", "sha256": "0" * 64}],
+            "classCounts": [
+                {
+                    "class": class_name,
+                    "headers": 1,
+                    "candidates": 1 if class_name == "YTColdConfig" else 0,
+                    "extracted": 1 if class_name == "YTColdConfig" else 0,
+                    "minimum": 1 if class_name == "YTColdConfig" else 0,
+                    "expected": None,
+                }
+                for class_name in ("YTColdConfig", "YTGlobalConfig", "YTHotConfig")
+            ],
+            "callsiteScan": {"enabled": False, "limitPerRecord": 20},
+        },
         "records": [minimal_record()],
     }
 
 
 class CatalogModelTests(unittest.TestCase):
+    def test_catalog_rejects_unknown_fields_invalid_source_and_naive_timestamp(self):
+        extra = minimal_catalog()
+        extra["unexpected"] = True
+        with self.assertRaisesRegex(ContractError, "unsupported"):
+            validate_catalog(extra)
+
+        bad_hash = minimal_catalog()
+        bad_hash["source"]["files"][0]["sha256"] = "bad"
+        with self.assertRaisesRegex(ContractError, "sha256"):
+            validate_catalog(bad_hash)
+
+        naive = minimal_catalog()
+        naive["generatedAt"] = "2026-07-25T00:00:00"
+        with self.assertRaisesRegex(ContractError, "RFC 3339"):
+            validate_catalog(naive)
+
     def test_catalog_rejects_duplicate_record_keys(self):
         document = minimal_catalog()
         document["records"].append(copy.deepcopy(document["records"][0]))
@@ -79,7 +114,7 @@ class CatalogModelTests(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ContractError, "summary"):
-            merge_curated([record], overlay)
+            merge_curated([record], overlay, youtube_version="21.28.3")
 
     def test_curated_overlay_merges_supported_metadata(self):
         record = minimal_record()
@@ -96,6 +131,8 @@ class CatalogModelTests(unittest.TestCase):
                     "category": "Playback",
                     "risk": "Low",
                     "status": "Inferred",
+                    "curationEvidence": ["definition:YTColdConfig:sampleFlag"],
+                    "curationRationale": "Conservative restatement of the selector name.",
                     "dependencies": [],
                     "conflicts": [],
                     "verifiedVersions": ["21.28.3"],
@@ -103,12 +140,59 @@ class CatalogModelTests(unittest.TestCase):
             ],
         }
 
-        merged = merge_curated([record], overlay)
+        merged = merge_curated(
+            [record],
+            overlay,
+            youtube_version="21.28.3",
+        )
 
         self.assertEqual(merged[0]["title"], "Curated Sample")
         self.assertEqual(merged[0]["category"], "Playback")
         self.assertEqual(merged[0]["status"], "Inferred")
         self.assertEqual(merged[0]["summary"], None)
+
+    def test_curated_overlay_is_version_bound_and_inference_requires_evidence(self):
+        record = minimal_record()
+        record["evidence"] = [
+            {
+                "id": "definition:YTColdConfig:sampleFlag",
+                "kind": "definition",
+                "source": {
+                    "path": "YTColdConfig.c",
+                    "lineStart": 1,
+                    "lineEnd": 2,
+                    "address": "0x1",
+                },
+                "excerpt": "-[YTColdConfig sampleFlag]",
+            }
+        ]
+        mismatch = {"schemaVersion": 1, "youtubeVersion": "999.0", "records": []}
+        with self.assertRaisesRegex(ContractError, "youtubeVersion"):
+            merge_curated([record], mismatch, youtube_version="21.28.3")
+
+        unsupported = {
+            "schemaVersion": 1,
+            "youtubeVersion": "21.28.3",
+            "records": [
+                {
+                    "class": "YTColdConfig",
+                    "selector": "sampleFlag",
+                    "status": "Inferred",
+                }
+            ],
+        }
+        with self.assertRaisesRegex(ContractError, "evidence"):
+            merge_curated([record], unsupported, youtube_version="21.28.3")
+
+        supported = copy.deepcopy(unsupported)
+        supported["records"][0].update(
+            {
+                "curationEvidence": ["definition:YTColdConfig:sampleFlag"],
+                "curationRationale": "Conservative restatement of the selector name.",
+            }
+        )
+        merged = merge_curated([record], supported, youtube_version="21.28.3")
+        self.assertEqual(merged[0]["status"], "Inferred")
 
     def test_runtime_contract_rejects_inconsistent_override(self):
         runtime = {

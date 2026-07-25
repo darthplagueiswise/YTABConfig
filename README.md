@@ -34,15 +34,25 @@ python3 tools/catalog_extractor.py \
   --youtube-version 21.28.3 \
   --generated-at 2026-07-25T00:00:00Z \
   --curated catalog/curated/youtube-21.28.3.json \
+  --expected-count YTColdConfig=6351 \
+  --expected-count YTGlobalConfig=21 \
+  --expected-count YTHotConfig=2459 \
   --include-callsites \
   --max-callsites 3 \
   --output catalog/generated/youtube-21.28.3.json
 ```
 
 Definition extraction reads only `YTGlobalConfig.c`, `YTColdConfig.c`, and
-`YTHotConfig.c`. Callsite collection is opt-in, uses ripgrep when available,
-falls back to a single streaming tree pass, and keeps the lexicographically
-first bounded set per selector regardless of scan order.
+`YTHotConfig.c`. It reports recognized headers, BOOL candidates, and extracted
+records per class. Extraction requires at least one record per class by default;
+use explicit `--expected-count CLASS=COUNT` arguments for release artifacts so
+decompiler format drift fails closed. Callsite collection is opt-in, streams
+the C tree while ignoring comments and strings, deduplicates source lines, and
+records whether the per-selector bounded evidence was truncated.
+
+Curated overlays are version-bound. `Inferred` and `Verified` entries require a
+non-empty rationale and evidence IDs that exist on the extracted record. The
+committed seed remains `Unknown` until that binding is supplied.
 
 ### Integration API
 
@@ -65,7 +75,8 @@ exported_at=..., context=..., states=...)` accepts state entries keyed by
 record contains explicit `native`, `override`, and `effective` objects.
 
 `import_runtime_export(payload)` accepts JSON text, bytes, or a mapping,
-validates schema version and state consistency, and returns a defensive copy.
+rejects oversized, duplicate-key, non-finite, unknown-field, or inconsistent
+state input, and returns a defensive copy.
 `render_markdown_report(document)` returns a stable category-sorted shareable
 report. Runtime integration can therefore capture selector values in Objective-C
 and pass the resulting state map to this provider without coupling catalog
