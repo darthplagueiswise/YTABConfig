@@ -1,0 +1,90 @@
+{
+  "records": [
+    {
+      "category": "Accessibility",
+      "class": "YTColdConfig",
+      "conflicts": [],
+      "dependencies": [],
+      "risk": "Unknown",
+      "selector": "iosClientGlobalConfigIosEnableCaptionsDefaultLanguageStrategyLastSelected",
+      "status": "Inferred",
+      "summary": null,
+      "title": "Use Last-Selected Captions Language (iOS)",
+      "verifiedVersions": [
+        "21.28.3"
+      ]
+    },
+    {
+      "category": "Accessibility",
+      "class": "YTColdConfig",
+      "conflicts": [],
+      "dependencies": [],
+      "risk": "Unknown",
+      "selector": "iosEnableModernTranscriptPanelSyncingBehavior",
+      "status": "Inferred",
+      "summary": null,
+      "title": "Modern Transcript Panel Syncing Candidate (iOS)",
+      "verifiedVersions": [
+        "21.28.3"
+      ]
+    },
+    {
+      "category": "Appearance",
+      "class": "YTColdConfig",
+      "conflicts": [],
+      "dependencies": [],
+      "risk": "Unknown",
+      "selector": "crossPlatformCoreClientGlobalConfigEnableNativeBadgesRounding",
+      "status": "Inferred",
+      "summary": null,
+      "title": "Native Badge Rounding",
+      "verifiedVersions": [
+        "21.28.3"
+      ]
+    },
+    {
+      "category": "Navigation",
+      "class": "YTColdConfig",
+      "conflicts": [],
+      "dependencies": [],
+      "risk": "Unknown",
+      "selector": "mainAppCoreClientEnableLongPressGesturesOnPivotBar",
+      "status": "Inferred",
+      "summary": null,
+      "title": "Pivot Bar Long-Press Gesture Candidate",
+      "verifiedVersions": [
+        "21.28.3"
+      ]
+    },
+    {
+      "category": "Playback",
+      "class": "YTHotConfig",
+      "conflicts": [],
+      "dependencies": [],
+      "risk": "Unknown",
+      "selector": "iosPlayerClientSharedConfigIosEnableServerSideMultiAudioSelection",
+      "status": "Inferred",
+      "summary": null,
+      "title": "Server-Side Multi-Audio Selection (iOS)",
+      "verifiedVersions": [
+        "21.28.3"
+      ]
+    },
+    {
+      "category": "Navigation",
+      "class": "YTHotConfig",
+      "conflicts": [],
+      "dependencies": [],
+      "risk": "Unknown",
+      "selector": "accountClientEnableLongPressOnPivotBar",
+      "status": "Inferred",
+      "summary": null,
+      "title": "Account Pivot Bar Long-Press Candidate",
+      "verifiedVersions": [
+        "21.28.3"
+      ]
+    }
+  ],
+  "schemaVersion": 1,
+  "youtubeVersion": "21.28.3"
+}

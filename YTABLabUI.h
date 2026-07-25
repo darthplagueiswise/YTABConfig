@@ -4,6 +4,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 @class YTABLabFlag;
 
+typedef void (^YTABLabJSONExportCompletion)(NSURL * _Nullable fileURL, NSError * _Nullable error);
+
 FOUNDATION_EXPORT NSString * const YTABLabMetadataTitleKey;
 FOUNDATION_EXPORT NSString * const YTABLabMetadataDescriptionKey;
 FOUNDATION_EXPORT NSString * const YTABLabMetadataStatusKey;
@@ -25,6 +27,7 @@ FOUNDATION_EXPORT NSString * const YTABLabMetadataDocumentedKey;
 - (BOOL)resetOverrideForFlag:(YTABLabFlag *)flag;
 - (BOOL)resetAllOverrides;
 - (NSString *)exportText;
+- (void)writeJSONExportWithCompletion:(YTABLabJSONExportCompletion)completion;
 - (NSUInteger)importText:(NSString *)text;
 @optional
 - (nullable YTABLabFlag *)refreshedFlagMatchingFlag:(YTABLabFlag *)flag;

@@ -13,6 +13,7 @@
 #import <YouTubeHeader/YTVersionUtils.h>
 #import <pthread.h>
 #import "RuntimeFlagRegistry.h"
+#import "YTABCatalogProvider.h"
 #import "YTABLabUI.h"
 
 #define Prefix @"YTABC"
@@ -189,7 +190,7 @@ BOOL YTABResetRuntimeOverride(NSString *sourceClass, NSString *selector, BOOL na
     return success;
 }
 
-void YTABResetAllRuntimeOverrides(NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *nativeValues) {
+BOOL YTABResetAllRuntimeOverrides(NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *nativeValues) {
     (void)nativeValues;
     NSDictionary *representation = [defaults dictionaryRepresentation];
     for (NSString *key in representation) {
@@ -197,12 +198,15 @@ void YTABResetAllRuntimeOverrides(NSDictionary<NSString *, NSDictionary<NSString
         NSString *runtimeKey = [key substringFromIndex:[@"YTABC." length]];
         NSString *classKey = nil;
         NSString *selector = nil;
-        if (!YTABCParseRuntimeKey(runtimeKey, &classKey, &selector) ||
-            !YTABCClearOverride(classKey, selector)) {
-            [defaults removeObjectForKey:key];
-        }
+        if (YTABCParseRuntimeKey(runtimeKey, &classKey, &selector))
+            YTABCClearOverride(classKey, selector);
+        [defaults removeObjectForKey:key];
     }
     allKeysNeedsUpdate = YES;
+    for (NSString *key in [defaults dictionaryRepresentation]) {
+        if ([key hasPrefix:@"YTABC."]) return NO;
+    }
+    return YES;
 }
 
 %group Search
@@ -308,7 +312,10 @@ static NSString *getCategory(char c, NSString *method) {
             accessibilityIdentifier:@"YTABC_FEATURE_LAB"
             detailTextBlock:nil
             selectBlock:^BOOL (YTSettingsCell *cell, NSUInteger arg1) {
-                id<YTABLabRuntimeProviding> provider = [[YTABLegacyRuntimeAdapter alloc] initWithCatalog:nil];
+                id<YTABLabCatalogProviding> catalog = [[YTABCatalogProvider alloc]
+                    initWithBundle:YTABCBundle()
+                    youtubeVersion:[%c(YTVersionUtils) appVersion]];
+                id<YTABLabRuntimeProviding> provider = [[YTABLegacyRuntimeAdapter alloc] initWithCatalog:catalog];
                 YTABLabDashboardViewController *dashboard = [[YTABLabDashboardViewController alloc] initWithProvider:provider];
                 [settingsViewController pushViewController:dashboard];
                 return YES;

@@ -3,7 +3,14 @@
 
 extern NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *YTABCopyRuntimeValues(void);
 extern NSDictionary<NSString *, NSNumber *> *YTABCopyOverrideValues(void);
-extern void YTABResetRuntimeOverride(NSString *sourceClass, NSString *selector, BOOL nativeValue);
+extern BOOL YTABResetRuntimeOverride(NSString *sourceClass, NSString *selector, BOOL nativeValue);
+extern BOOL YTABResetAllRuntimeOverrides(NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *nativeValues);
+
+#define YTAB_STRINGIFY_INNER(value) #value
+#define YTAB_STRINGIFY(value) YTAB_STRINGIFY_INNER(value)
+#ifndef TWEAK_VERSION
+#define TWEAK_VERSION unknown
+#endif
 
 NSString * const YTABLabMetadataTitleKey = @"title";
 NSString * const YTABLabMetadataDescriptionKey = @"description";
@@ -17,6 +24,8 @@ static NSString * const YTABPreferencePrefix = @"YTABC.";
 static NSString * const YTABUnknownStatus = @"Unknown / Needs Research";
 static NSString * const YTABUnknownDescription = @"No verified description is available. This flag needs research before we make claims about its behavior.";
 static NSString * const YTABUnknownEvidence = @"No verified evidence is linked yet.";
+static NSString * const YTABLabExportErrorDomain = @"com.afterglow-labs.ytabconfig.runtime-export";
+static const NSUInteger YTABLabMaximumExportStringLength = 1024;
 
 typedef NS_ENUM(NSUInteger, YTABLabListMode) {
     YTABLabListModeAll,
@@ -33,6 +42,47 @@ static NSNumber *YTABValidOverrideNumber(id value) {
     if (![value isKindOfClass:NSNumber.class]) return nil;
     double number = [value doubleValue];
     return (number == 0.0 || number == 1.0) ? @([value boolValue]) : nil;
+}
+
+static NSString *YTABBoundedExportString(id value, NSString *fallback) {
+    if (![value isKindOfClass:NSString.class]) return fallback;
+    NSString *trimmed = [value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (trimmed.length == 0) return fallback;
+    if (trimmed.length > YTABLabMaximumExportStringLength) {
+        trimmed = [trimmed substringToIndex:YTABLabMaximumExportStringLength];
+    }
+    return trimmed;
+}
+
+static NSString *YTABExportStatus(NSString *status) {
+    if ([status isEqualToString:@"Verified"] ||
+        [status isEqualToString:@"Inferred"] ||
+        [status isEqualToString:@"Unknown"]) {
+        return status;
+    }
+    return @"Unknown";
+}
+
+static NSString *YTABExportRisk(NSString *risk) {
+    if ([risk isEqualToString:@"Low"] ||
+        [risk isEqualToString:@"Medium"] ||
+        [risk isEqualToString:@"High"] ||
+        [risk isEqualToString:@"Unknown"]) {
+        return risk;
+    }
+    return @"Unknown";
+}
+
+static NSError *YTABExportError(NSInteger code, NSString *description) {
+    return [NSError errorWithDomain:YTABLabExportErrorDomain
+                               code:code
+                           userInfo:@{NSLocalizedDescriptionKey: description ?: @"Runtime export failed."}];
+}
+
+static NSString *YTABExportTimestamp(void) {
+    NSISO8601DateFormatter *formatter = [NSISO8601DateFormatter new];
+    formatter.formatOptions = NSISO8601DateFormatWithInternetDateTime;
+    return [formatter stringFromDate:NSDate.date];
 }
 
 static void YTABConfigureSelfSizingTable(UITableView *tableView) {
@@ -176,18 +226,13 @@ static NSString *YTABReadableTitle(NSString *selector) {
 - (BOOL)resetOverrideForFlag:(YTABLabFlag *)flag {
     if (!flag.hasOverride) return YES;
     if (flag.removed) {
-        YTABResetRuntimeOverride(flag.sourceClass, flag.rawSelector, flag.nativeValue);
-        return YES;
+        return YTABResetRuntimeOverride(flag.sourceClass, flag.rawSelector, flag.nativeValue);
     }
     return YTABCClearOverride(flag.sourceClass, flag.rawSelector);
 }
 
 - (BOOL)resetAllOverrides {
-    BOOL succeeded = YES;
-    for (YTABLabFlag *flag in [self allFlags]) {
-        if (flag.hasOverride && ![self resetOverrideForFlag:flag]) succeeded = NO;
-    }
-    return succeeded;
+    return YTABResetAllRuntimeOverrides(self.nativeValues ?: @{});
 }
 
 - (YTABLabFlag *)refreshedFlagMatchingFlag:(YTABLabFlag *)flag {
@@ -216,6 +261,110 @@ static NSString *YTABReadableTitle(NSString *selector) {
             flag.sourceClass, flag.rawSelector, flag.effectiveValue]];
     }
     return [lines componentsJoinedByString:@"\n"];
+}
+
+- (NSDictionary<NSString *, id> *)runtimeExportDocumentForFlags:(NSArray<YTABLabFlag *> *)flags
+                                                     exportedAt:(NSString *)exportedAt {
+    NSMutableArray<NSDictionary<NSString *, id> *> *records = [NSMutableArray arrayWithCapacity:flags.count];
+    for (YTABLabFlag *flag in flags) {
+        if (flag.removed) continue;
+        id nativeValue = flag.hasNativeValue ? @(flag.nativeValue) : NSNull.null;
+        id overrideValue = flag.hasOverride ? @(flag.effectiveValue) : NSNull.null;
+        id effectiveValue = flag.hasEffectiveValue ? @(flag.effectiveValue) : NSNull.null;
+        NSString *overrideMode = flag.hasOverride
+            ? (flag.effectiveValue ? @"force-on" : @"force-off")
+            : @"inherit";
+        NSString *effectiveSource = flag.hasOverride
+            ? @"override"
+            : (flag.hasNativeValue ? @"native" : @"unavailable");
+        id summary = flag.documented
+            ? YTABBoundedExportString(flag.flagDescription, nil)
+            : nil;
+
+        [records addObject:@{
+            @"class": YTABBoundedExportString(flag.sourceClass, @"Unknown source"),
+            @"selector": YTABBoundedExportString(flag.rawSelector, @"unknownSelector"),
+            @"native": @{
+                @"value": nativeValue,
+                @"source": flag.hasNativeValue ? @"runtime" : @"unavailable",
+                @"capturedAt": flag.hasNativeValue ? exportedAt : NSNull.null,
+            },
+            @"override": @{
+                @"mode": overrideMode,
+                @"value": overrideValue,
+            },
+            @"effective": @{
+                @"value": effectiveValue,
+                @"source": effectiveSource,
+            },
+            @"title": YTABBoundedExportString(flag.readableTitle, @"Untitled Flag"),
+            @"summary": summary ?: NSNull.null,
+            @"category": YTABBoundedExportString(flag.category, @"Uncatalogued"),
+            @"risk": YTABExportRisk(flag.risk),
+            @"status": YTABExportStatus(flag.status),
+        }];
+    }
+    [records sortUsingComparator:^NSComparisonResult(NSDictionary *left, NSDictionary *right) {
+        NSArray<NSString *> *leftValues = @[left[@"category"], left[@"title"], left[@"class"], left[@"selector"]];
+        NSArray<NSString *> *rightValues = @[right[@"category"], right[@"title"], right[@"class"], right[@"selector"]];
+        for (NSUInteger index = 0; index < leftValues.count; index++) {
+            NSComparisonResult result = [leftValues[index] localizedCaseInsensitiveCompare:rightValues[index]];
+            if (result != NSOrderedSame) return result;
+        }
+        return NSOrderedSame;
+    }];
+
+    NSBundle *mainBundle = NSBundle.mainBundle;
+    NSString *youtubeVersion = YTABBoundedExportString(
+        [mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"], @"Unknown");
+    NSString *bundleIdentifier = YTABBoundedExportString(mainBundle.bundleIdentifier, @"Unknown");
+    NSString *osVersion = YTABBoundedExportString(UIDevice.currentDevice.systemVersion, @"Unknown");
+    NSString *tweakVersion = YTABBoundedExportString(
+        [NSString stringWithUTF8String:YTAB_STRINGIFY(TWEAK_VERSION)], @"Unknown");
+    return @{
+        @"schemaVersion": @1,
+        @"exportedAt": exportedAt,
+        @"youtubeVersion": youtubeVersion,
+        @"tweakVersion": tweakVersion,
+        @"context": @{
+            @"applicationIdentifier": bundleIdentifier,
+            @"platform": @"iOS",
+            @"osVersion": osVersion,
+            @"recordCount": @(records.count),
+        },
+        @"records": records,
+    };
+}
+
+- (void)writeJSONExportWithCompletion:(YTABLabJSONExportCompletion)completion {
+    if (!completion) return;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        @autoreleasepool {
+            NSString *exportedAt = YTABExportTimestamp();
+            NSDictionary *document = [self runtimeExportDocumentForFlags:[self allFlags]
+                                                               exportedAt:exportedAt];
+            NSError *error = nil;
+            NSData *data = nil;
+            if ([NSJSONSerialization isValidJSONObject:document]) {
+                data = [NSJSONSerialization dataWithJSONObject:document
+                                                       options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys
+                                                         error:&error];
+            } else {
+                error = YTABExportError(1, @"Runtime state contains a value that cannot be encoded as JSON.");
+            }
+
+            NSURL *fileURL = nil;
+            if (data && !error) {
+                NSString *filename = [NSString stringWithFormat:@"YTABConfig-runtime-%@.json", NSUUID.UUID.UUIDString];
+                fileURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:filename]];
+                if (![data writeToURL:fileURL options:NSDataWritingAtomic error:&error]) fileURL = nil;
+            }
+            if (!fileURL && !error) error = YTABExportError(2, @"The runtime JSON file could not be written.");
+            dispatch_async(dispatch_get_main_queue(), ^{
+                completion(fileURL, error);
+            });
+        }
+    });
 }
 
 - (NSUInteger)importText:(NSString *)text {
@@ -603,12 +752,12 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    NSArray<NSNumber *> *rowCounts = @[@1, @3, @1, @1, @3];
+    NSArray<NSNumber *> *rowCounts = @[@1, @3, @1, @1, @4];
     return rowCounts[section].integerValue;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
-    return @[@"Discover", @"Collections", @"Override Recovery", @"Experimental", @"Clipboard & Recovery"][section];
+    return @[@"Discover", @"Collections", @"Override Recovery", @"Experimental", @"Export & Recovery"][section];
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
@@ -668,13 +817,15 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
                                        (unsigned long)[self countForMode:YTABLabListModeAll]]];
     }
 
-    NSArray *titles = @[@"Export Current Settings", @"Import Overrides from Clipboard", @"Reset All Overrides"];
-    NSArray *subtitles = @[@"Copy the compatible Class.selector: 0/1 format",
+    NSArray *titles = @[@"Share Runtime Report (.json)", @"Copy Legacy Text Export",
+                        @"Import Overrides from Clipboard", @"Reset All Overrides"];
+    NSArray *subtitles = @[@"Share structured native, override, effective, and catalog state",
+                           @"Copy the compatible Class.selector: 0/1 format",
                            @"Apply recognized runtime flags only",
                            @"Remove overrides without changing native values"];
     UITableViewCell *cell = [self navigationCellWithTitle:titles[indexPath.row] subtitle:subtitles[indexPath.row]];
     cell.accessoryType = UITableViewCellAccessoryNone;
-    if (indexPath.row == 2) cell.textLabel.textColor = [UIColor redColor];
+    if (indexPath.row == 3) cell.textLabel.textColor = [UIColor redColor];
     return cell;
 }
 
@@ -712,6 +863,36 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
     [self presentViewController:alert animated:YES completion:nil];
 }
 
+- (void)shareJSONExport {
+    __weak typeof(self) weakSelf = self;
+    [self.provider writeJSONExportWithCompletion:^(NSURL *fileURL, NSError *error) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        if (!fileURL || error || ![fileURL.pathExtension.lowercaseString isEqualToString:@"json"]) {
+            [strongSelf showMessage:error.localizedDescription ?: @"The runtime JSON export could not be created."];
+            return;
+        }
+
+        UIActivityViewController *activity = [[UIActivityViewController alloc]
+            initWithActivityItems:@[fileURL]
+            applicationActivities:nil];
+        UIPopoverPresentationController *popover = activity.popoverPresentationController;
+        if (popover) {
+            popover.sourceView = strongSelf.view;
+            popover.sourceRect = CGRectMake(CGRectGetMidX(strongSelf.view.bounds),
+                                            CGRectGetMidY(strongSelf.view.bounds), 1.0, 1.0);
+            popover.permittedArrowDirections = 0;
+        }
+        activity.completionWithItemsHandler = ^(UIActivityType activityType, BOOL completed,
+                                                NSArray *returnedItems, NSError *activityError) {
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                [[NSFileManager defaultManager] removeItemAtURL:fileURL error:nil];
+            });
+        };
+        [strongSelf presentViewController:activity animated:YES completion:nil];
+    }];
+}
+
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     if (indexPath.section == 0) {
@@ -725,9 +906,11 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
     } else if (indexPath.section == 3) {
         [self pushListWithMode:YTABLabListModeAll title:@"Raw Lab" beginSearch:NO];
     } else if (indexPath.row == 0) {
-        [UIPasteboard generalPasteboard].string = [self.provider exportText];
-        [self showMessage:@"Current settings copied to the clipboard."];
+        [self shareJSONExport];
     } else if (indexPath.row == 1) {
+        [UIPasteboard generalPasteboard].string = [self.provider exportText];
+        [self showMessage:@"Legacy text export copied to the clipboard."];
+    } else if (indexPath.row == 2) {
         NSUInteger count = [self.provider importText:[UIPasteboard generalPasteboard].string ?: @""];
         self.flags = [self.provider allFlags];
         [self.tableView reloadData];
