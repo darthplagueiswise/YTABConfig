@@ -67,12 +67,12 @@
 
 **Files:**
 - Create: `catalog/curated/youtube-21.28.3.json`
-- Create: `catalog/generated/youtube-21.28.3.json`
+- Generate (ignored): `catalog/generated/youtube-21.28.3.json`
 - Modify: `README.md`
 
 **Interfaces:**
 - Consumes: extractor CLI and curated overlay.
-- Produces: checked-in full catalog and documented integration commands.
+- Produces: reproducible ignored full catalog and documented integration commands.
 
 - [ ] Add a small overlay for directly evidenced language, transcript, badge, and long-press candidates, with null summaries where semantics are not proven.
 - [ ] Generate twice with the same metadata and compare SHA-256 digests.

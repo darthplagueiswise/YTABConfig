@@ -1,0 +1,182 @@
+{
+  "$id": "https://afterglow-labs.github.io/YTABConfig/schema/runtime-export-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "context": {
+      "type": "object"
+    },
+    "exportedAt": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "records": {
+      "items": {
+        "$ref": "#/$defs/runtimeRecord"
+      },
+      "type": "array"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "tweakVersion": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "youtubeVersion": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "exportedAt",
+    "youtubeVersion",
+    "tweakVersion",
+    "context",
+    "records"
+  ],
+  "title": "YTABConfig runtime export v1",
+  "type": "object",
+  "$defs": {
+    "nativeState": {
+      "additionalProperties": false,
+      "properties": {
+        "capturedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "enum": [
+            "runtime",
+            "unavailable"
+          ]
+        },
+        "value": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "value",
+        "source",
+        "capturedAt"
+      ],
+      "type": "object"
+    },
+    "overrideState": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "inherit",
+            "force-on",
+            "force-off"
+          ]
+        },
+        "value": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "mode",
+        "value"
+      ],
+      "type": "object"
+    },
+    "runtimeRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "type": "string"
+        },
+        "class": {
+          "enum": [
+            "YTGlobalConfig",
+            "YTColdConfig",
+            "YTHotConfig"
+          ]
+        },
+        "effective": {
+          "$ref": "#/$defs/valueSource"
+        },
+        "native": {
+          "$ref": "#/$defs/nativeState"
+        },
+        "override": {
+          "$ref": "#/$defs/overrideState"
+        },
+        "risk": {
+          "enum": [
+            "Low",
+            "Medium",
+            "High",
+            "Unknown"
+          ]
+        },
+        "selector": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "Verified",
+            "Inferred",
+            "Unknown"
+          ]
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "class",
+        "selector",
+        "native",
+        "override",
+        "effective",
+        "title",
+        "summary",
+        "category",
+        "risk",
+        "status"
+      ],
+      "type": "object"
+    },
+    "valueSource": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "enum": [
+            "native",
+            "override",
+            "unavailable"
+          ]
+        },
+        "value": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "value",
+        "source"
+      ],
+      "type": "object"
+    }
+  }
+}

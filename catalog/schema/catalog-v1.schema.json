@@ -1,0 +1,362 @@
+{
+  "$id": "https://afterglow-labs.github.io/YTABConfig/schema/catalog-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "generatedAt": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "records": {
+      "items": {
+        "$ref": "#/$defs/record"
+      },
+      "type": "array"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "source": {
+      "$ref": "#/$defs/catalogSource"
+    },
+    "youtubeVersion": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "youtubeVersion",
+    "generatedAt",
+    "source",
+    "records"
+  ],
+  "title": "YTABConfig metadata catalog v1",
+  "type": "object",
+  "$defs": {
+    "catalogSource": {
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "sha256"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "const": "decompiler-c-files"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "root",
+        "files"
+      ],
+      "type": "object"
+    },
+    "defaultInference": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence": {
+          "enum": [
+            "High",
+            "Medium",
+            "Low"
+          ]
+        },
+        "evidence": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "method": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "value": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "value",
+        "confidence",
+        "method",
+        "evidence"
+      ],
+      "type": "object"
+    },
+    "evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "excerpt": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "definition",
+            "callsite"
+          ]
+        },
+        "source": {
+          "additionalProperties": false,
+          "properties": {
+            "address": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lineEnd": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "lineStart": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "path": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "lineStart",
+            "lineEnd",
+            "address"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "source",
+        "excerpt"
+      ],
+      "type": "object"
+    },
+    "record": {
+      "additionalProperties": false,
+      "properties": {
+        "callsites": {
+          "items": {
+            "$ref": "#/$defs/evidence"
+          },
+          "type": "array"
+        },
+        "category": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "class": {
+          "enum": [
+            "YTGlobalConfig",
+            "YTColdConfig",
+            "YTHotConfig"
+          ]
+        },
+        "conflicts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "defaultInference": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/defaultInference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dependencies": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "effective": {
+          "$ref": "#/$defs/valueSource"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/evidence"
+          },
+          "type": "array"
+        },
+        "experimentID": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "native": {
+          "$ref": "#/$defs/nativeState"
+        },
+        "override": {
+          "$ref": "#/$defs/overrideState"
+        },
+        "risk": {
+          "enum": [
+            "Low",
+            "Medium",
+            "High",
+            "Unknown"
+          ]
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "selector": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "Verified",
+            "Inferred",
+            "Unknown"
+          ]
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "verifiedVersions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "class",
+        "selector",
+        "experimentID",
+        "native",
+        "override",
+        "effective",
+        "title",
+        "summary",
+        "category",
+        "risk",
+        "dependencies",
+        "conflicts",
+        "status",
+        "evidence",
+        "callsites",
+        "defaultInference",
+        "verifiedVersions"
+      ],
+      "type": "object"
+    },
+    "nativeState": {
+      "additionalProperties": false,
+      "properties": {
+        "capturedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "value": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "value",
+        "source",
+        "capturedAt"
+      ],
+      "type": "object"
+    },
+    "overrideState": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "inherit",
+            "force-on",
+            "force-off"
+          ]
+        },
+        "value": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "mode",
+        "value"
+      ],
+      "type": "object"
+    },
+    "valueSource": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "enum": [
+            "native",
+            "override",
+            "unavailable"
+          ]
+        },
+        "value": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "value",
+        "source"
+      ],
+      "type": "object"
+    }
+  }
+}
