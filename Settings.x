@@ -12,6 +12,7 @@
 #import <YouTubeHeader/YTUIUtils.h>
 #import <YouTubeHeader/YTVersionUtils.h>
 #import <pthread.h>
+#import "YTABLabUI.h"
 
 #define Prefix @"YTABC"
 #define EnabledKey @"EnabledYTABC"
@@ -127,6 +128,51 @@ static void clearCaches() {
     pthread_mutex_unlock(&cacheMutex);
 }
 
+NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *YTABCopyRuntimeValues() {
+    pthread_mutex_lock(&cacheMutex);
+    NSMutableDictionary *snapshot = [NSMutableDictionary dictionaryWithCapacity:cache.count];
+    [cache enumerateKeysAndObjectsUsingBlock:^(NSString *classKey, NSDictionary *methods, BOOL *stop) {
+        snapshot[classKey] = [methods copy];
+    }];
+    pthread_mutex_unlock(&cacheMutex);
+    return [snapshot copy];
+}
+
+NSDictionary<NSString *, NSNumber *> *YTABCopyOverrideValues() {
+    NSDictionary *representation = [defaults dictionaryRepresentation];
+    NSMutableDictionary *overrides = [NSMutableDictionary dictionary];
+    [representation enumerateKeysAndObjectsUsingBlock:^(NSString *key, id value, BOOL *stop) {
+        if ([key hasPrefix:@"YTABC."] && [value isKindOfClass:[NSNumber class]]) overrides[key] = value;
+    }];
+    return [overrides copy];
+}
+
+void YTABSetRuntimeOverride(NSString *sourceClass, NSString *selector, BOOL value) {
+    setValue(selector, sourceClass, value);
+}
+
+void YTABResetRuntimeOverride(NSString *sourceClass, NSString *selector, BOOL nativeValue) {
+    NSString *fullKey = getKey(selector, sourceClass);
+    pthread_mutex_lock(&cacheMutex);
+    if (cache[sourceClass][selector]) cache[sourceClass][selector] = @(nativeValue);
+    pthread_mutex_unlock(&cacheMutex);
+    [defaults removeObjectForKey:fullKey];
+    allKeysNeedsUpdate = YES;
+}
+
+void YTABResetAllRuntimeOverrides(NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *nativeValues) {
+    NSDictionary *overrides = YTABCopyOverrideValues();
+    for (NSString *key in overrides) [defaults removeObjectForKey:key];
+    pthread_mutex_lock(&cacheMutex);
+    [nativeValues enumerateKeysAndObjectsUsingBlock:^(NSString *classKey, NSDictionary *methods, BOOL *stop) {
+        [methods enumerateKeysAndObjectsUsingBlock:^(NSString *selector, NSNumber *value, BOOL *innerStop) {
+            if (cache[classKey][selector]) cache[classKey][selector] = value;
+        }];
+    }];
+    pthread_mutex_unlock(&cacheMutex);
+    allKeysNeedsUpdate = YES;
+}
+
 %group Search
 
 %hook YTSettingsViewController
@@ -222,6 +268,25 @@ static NSString *getCategory(char c, NSString *method) {
     Class YTAlertViewClass = %c(YTAlertView);
 
     if (tweakEnabled()) {
+        NSDictionary *runtimeValues = YTABCopyRuntimeValues();
+        for (NSDictionary *methods in runtimeValues.allValues) totalSettings += methods.count;
+        YTSettingsViewController *settingsViewController = [self valueForKey:@"_settingsViewControllerDelegate"];
+        YTSettingsSectionItem *featureLab = [YTSettingsSectionItemClass itemWithTitle:@"Open Feature Lab"
+            titleDescription:@"Search, review, and safely override experimental features"
+            accessibilityIdentifier:@"YTABC_FEATURE_LAB"
+            detailTextBlock:nil
+            selectBlock:^BOOL (YTSettingsCell *cell, NSUInteger arg1) {
+                id<YTABLabRuntimeProviding> provider = [[YTABLegacyRuntimeAdapter alloc] initWithCatalog:nil];
+                YTABLabDashboardViewController *dashboard = [[YTABLabDashboardViewController alloc] initWithProvider:provider];
+                [settingsViewController pushViewController:dashboard];
+                return YES;
+            }];
+        [sectionItems addObject:featureLab];
+    }
+
+    // The legacy giant selector list remains compiled for compatibility, but is no
+    // longer presented. Raw Lab now owns the complete runtime list.
+    if (NO && tweakEnabled()) {
         // AB flags
         // Pre-calculate total method count for capacity allocation
         NSUInteger estimatedMethodCount = 0;
@@ -600,7 +665,8 @@ static NSString *getCategory(char c, NSString *method) {
     [sectionItems insertObject:master atIndex:0];
 
     if (tweakEnabled()) {
-        NSString *titleDescription =[NSString stringWithFormat:@"YTABConfig %@, %d feature flags.", @(OS_STRINGIFY(TWEAK_VERSION)), totalSettings];
+        NSString *titleDescription = [NSString stringWithFormat:@"Afterglow Labs Feature Lab %@ • %d runtime flags",
+            @(OS_STRINGIFY(TWEAK_VERSION)), totalSettings];
         YTSettingsSectionItem *info = [YTSettingsSectionItemClass itemWithTitle:nil
             titleDescription:titleDescription
             accessibilityIdentifier:nil
@@ -611,7 +677,7 @@ static NSString *getCategory(char c, NSString *method) {
     }
 
     YTSettingsViewController *delegate = [self valueForKey:@"_dataDelegate"];
-    NSString *title = @"A/B";
+    NSString *title = @"Feature Lab";
     if ([delegate respondsToSelector:@selector(setSectionItems:forCategory:title:icon:titleDescription:headerHidden:)]) {
         YTIIcon *icon = [%c(YTIIcon) new];
         icon.iconType = YT_EXPERIMENT;
