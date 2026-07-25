@@ -44,6 +44,32 @@ static NSNumber *YTABValidOverrideNumber(id value) {
     return (number == 0.0 || number == 1.0) ? @([value boolValue]) : nil;
 }
 
+static BOOL YTABExportClassIsSupported(NSString *sourceClass) {
+    static NSSet<NSString *> *classes;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        classes = [NSSet setWithArray:@[@"YTGlobalConfig", @"YTColdConfig", @"YTHotConfig"]];
+    });
+    return [classes containsObject:sourceClass];
+}
+
+static BOOL YTABParseRuntimeKey(
+    NSString *runtimeKey,
+    NSString **sourceClass,
+    NSString **selector
+) {
+    NSRange separator = [runtimeKey rangeOfString:@"."];
+    if (separator.location == NSNotFound || separator.location == 0 ||
+        separator.location + 1 >= runtimeKey.length) {
+        return NO;
+    }
+    NSString *parsedClass = [runtimeKey substringToIndex:separator.location];
+    if (!YTABExportClassIsSupported(parsedClass)) return NO;
+    if (sourceClass) *sourceClass = parsedClass;
+    if (selector) *selector = [runtimeKey substringFromIndex:separator.location + 1];
+    return YES;
+}
+
 static NSString *YTABBoundedExportString(id value, NSString *fallback) {
     if (![value isKindOfClass:NSString.class]) return fallback;
     NSString *trimmed = [value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
@@ -263,39 +289,69 @@ static NSString *YTABReadableTitle(NSString *selector) {
     return [lines componentsJoinedByString:@"\n"];
 }
 
-- (NSDictionary<NSString *, id> *)runtimeExportDocumentForFlags:(NSArray<YTABLabFlag *> *)flags
-                                                     exportedAt:(NSString *)exportedAt {
-    NSMutableArray<NSDictionary<NSString *, id> *> *records = [NSMutableArray arrayWithCapacity:flags.count];
-    for (YTABLabFlag *flag in flags) {
-        if (flag.removed) continue;
-        id nativeValue = flag.hasNativeValue ? @(flag.nativeValue) : NSNull.null;
-        id overrideValue = flag.hasOverride ? @(flag.effectiveValue) : NSNull.null;
-        id effectiveValue = flag.hasEffectiveValue ? @(flag.effectiveValue) : NSNull.null;
-        NSString *overrideMode = flag.hasOverride
-            ? (flag.effectiveValue ? @"force-on" : @"force-off")
-            : @"inherit";
-        NSString *effectiveSource = flag.hasOverride
-            ? @"override"
-            : (flag.hasNativeValue ? @"native" : @"unavailable");
+- (NSDictionary<NSString *, id> *)runtimeExportDocumentWithRuntimeSnapshot:
+        (NSDictionary<NSString *, NSDictionary<NSString *, id> *> *)runtimeSnapshot
+    preferenceOverrides:(NSDictionary<NSString *, NSNumber *> *)preferenceOverrides
+             exportedAt:(NSString *)exportedAt {
+    NSMutableSet<NSString *> *runtimeKeys =
+        [NSMutableSet setWithArray:runtimeSnapshot.allKeys ?: @[]];
+    for (NSString *preferenceKey in preferenceOverrides) {
+        if (![preferenceKey hasPrefix:YTABPreferencePrefix]) continue;
+        NSString *runtimeKey = [preferenceKey substringFromIndex:YTABPreferencePrefix.length];
+        NSString *sourceClass = nil;
+        NSString *selector = nil;
+        if (YTABParseRuntimeKey(runtimeKey, &sourceClass, &selector)) {
+            [runtimeKeys addObject:runtimeKey];
+        }
+    }
+
+    NSMutableArray<NSDictionary<NSString *, id> *> *records =
+        [NSMutableArray arrayWithCapacity:runtimeKeys.count];
+    for (NSString *runtimeKey in runtimeKeys) {
+        NSString *sourceClass = nil;
+        NSString *selector = nil;
+        if (!YTABParseRuntimeKey(runtimeKey, &sourceClass, &selector)) continue;
+
+        NSDictionary<NSString *, id> *runtimeState = runtimeSnapshot[runtimeKey];
+        BOOL removed = runtimeState == nil;
+        NSNumber *native = removed ? nil : YTABValidOverrideNumber(runtimeState[@"native"]);
+        NSString *nativeCapturedAt =
+            [runtimeState[@"nativeCapturedAt"] isKindOfClass:NSString.class]
+                ? runtimeState[@"nativeCapturedAt"]
+                : nil;
+        if (!nativeCapturedAt) native = nil;
+
+        NSNumber *override = removed
+            ? YTABValidOverrideNumber(
+                preferenceOverrides[[YTABPreferencePrefix stringByAppendingString:runtimeKey]])
+            : YTABValidOverrideNumber(runtimeState[@"override"]);
+        if (removed && !override) continue;
+
+        NSNumber *effective = override ?: native;
+        YTABLabFlag *flag = [self flagForSelector:selector
+                                      sourceClass:sourceClass
+                                      nativeValue:native
+                                     overrideValue:override
+                                          removed:removed];
         id summary = flag.documented
             ? YTABBoundedExportString(flag.flagDescription, nil)
             : nil;
 
         [records addObject:@{
-            @"class": YTABBoundedExportString(flag.sourceClass, @"Unknown source"),
-            @"selector": YTABBoundedExportString(flag.rawSelector, @"unknownSelector"),
+            @"class": YTABBoundedExportString(sourceClass, @"YTGlobalConfig"),
+            @"selector": YTABBoundedExportString(selector, @"unknownSelector"),
             @"native": @{
-                @"value": nativeValue,
-                @"source": flag.hasNativeValue ? @"runtime" : @"unavailable",
-                @"capturedAt": flag.hasNativeValue ? exportedAt : NSNull.null,
+                @"value": native ?: NSNull.null,
+                @"source": native ? @"runtime" : @"unavailable",
+                @"capturedAt": native ? nativeCapturedAt : NSNull.null,
             },
             @"override": @{
-                @"mode": overrideMode,
-                @"value": overrideValue,
+                @"mode": override ? (override.boolValue ? @"force-on" : @"force-off") : @"inherit",
+                @"value": override ?: NSNull.null,
             },
             @"effective": @{
-                @"value": effectiveValue,
-                @"source": effectiveSource,
+                @"value": effective ?: NSNull.null,
+                @"source": override ? @"override" : (native ? @"native" : @"unavailable"),
             },
             @"title": YTABBoundedExportString(flag.readableTitle, @"Untitled Flag"),
             @"summary": summary ?: NSNull.null,
@@ -341,8 +397,12 @@ static NSString *YTABReadableTitle(NSString *selector) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         @autoreleasepool {
             NSString *exportedAt = YTABExportTimestamp();
-            NSDictionary *document = [self runtimeExportDocumentForFlags:[self allFlags]
-                                                               exportedAt:exportedAt];
+            NSDictionary *runtimeSnapshot = YTABCRuntimeSnapshot() ?: @{};
+            NSDictionary *preferenceOverrides = YTABCopyOverrideValues() ?: @{};
+            NSDictionary *document = [self
+                runtimeExportDocumentWithRuntimeSnapshot:runtimeSnapshot
+                preferenceOverrides:preferenceOverrides
+                exportedAt:exportedAt];
             NSError *error = nil;
             NSData *data = nil;
             if ([NSJSONSerialization isValidJSONObject:document]) {

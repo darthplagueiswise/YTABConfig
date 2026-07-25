@@ -26,6 +26,7 @@ static NSArray<NSString *> *YTABCCanonicalConfigClassNames(void) {
 @property(nonatomic, copy) NSString *selectorName;
 @property(nonatomic, copy) NSString *preferenceKey;
 @property(nonatomic, assign) BOOL nativeValue;
+@property(nonatomic, copy, nullable) NSString *nativeCapturedAt;
 @property(nonatomic, assign) IMP discoveredIMP;
 @property(nonatomic, assign, nullable) IMP originalIMP;
 @property(nonatomic, weak, nullable) id instance;
@@ -74,6 +75,12 @@ static BOOL YTABCValidStoredBoolean(id value, BOOL *result) {
 static BOOL YTABCInvokeBOOL(IMP implementation, id target, SEL selector) {
     if (!implementation || !target || !selector) return NO;
     return ((BOOL (*)(id, SEL))implementation)(target, selector);
+}
+
+static NSString *YTABCCurrentTimestamp(void) {
+    NSISO8601DateFormatter *formatter = [NSISO8601DateFormatter new];
+    formatter.formatOptions = NSISO8601DateFormatWithInternetDateTime;
+    return [formatter stringFromDate:NSDate.date];
 }
 
 static NSUserDefaults *YTABCDefaultsSnapshot(void) {
@@ -259,7 +266,11 @@ static BOOL YTABCSelectorIsExcluded(NSString *selectorName) {
     return [selectorName rangeOfString:@"Android"].location != NSNotFound;
 }
 
-static BOOL YTABCRefreshRecordNativeSample(YTABCRuntimeFlagRecord *record, id instance) {
+static BOOL YTABCRefreshRecordNativeSample(
+    YTABCRuntimeFlagRecord *record,
+    id instance,
+    NSString *capturedAt
+) {
     pthread_mutex_lock(&YTABCRegistryMutex);
     IMP implementation = record.originalIMP ?: record.discoveredIMP;
     SEL selector = record.selector;
@@ -269,26 +280,28 @@ static BOOL YTABCRefreshRecordNativeSample(YTABCRuntimeFlagRecord *record, id in
     pthread_mutex_lock(&YTABCRegistryMutex);
     record.instance = instance;
     record.nativeValue = nativeValue;
+    record.nativeCapturedAt = capturedAt;
     pthread_mutex_unlock(&YTABCRegistryMutex);
     return nativeValue;
 }
 
-void YTABCRuntimeRegisterConfigInstance(
+NSUInteger YTABCRuntimeRegisterConfigInstance(
     id instance,
     NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *nativeCatalog
 ) {
     if (!instance || !nativeCatalog) {
         NSLog(@"[YTABConfig Runtime] Refusing to register a nil instance or catalog");
-        return;
+        return 0;
     }
 
     YTABCInitializeRegistry();
     Class ownerClass = YTABCCanonicalConfigOwnerClass(instance);
     if (!ownerClass) {
         NSLog(@"[YTABConfig Runtime] Refusing unknown config class %@", NSStringFromClass(object_getClass(instance)));
-        return;
+        return 0;
     }
     NSString *className = NSStringFromClass(ownerClass);
+    NSString *capturedAt = YTABCCurrentTimestamp();
     NSMutableDictionary<NSString *, NSNumber *> *classCatalog = [NSMutableDictionary dictionary];
 
     unsigned int methodCount = 0;
@@ -306,7 +319,7 @@ void YTABCRuntimeRegisterConfigInstance(
         YTABCRuntimeFlagRecord *existingRecord = YTABCRecords[recordKey];
         pthread_mutex_unlock(&YTABCRegistryMutex);
         if (existingRecord) {
-            classCatalog[selectorName] = @(YTABCRefreshRecordNativeSample(existingRecord, instance));
+            classCatalog[selectorName] = @(YTABCRefreshRecordNativeSample(existingRecord, instance, capturedAt));
             continue;
         }
 
@@ -320,6 +333,7 @@ void YTABCRuntimeRegisterConfigInstance(
         record.selectorName = selectorName;
         record.preferenceKey = YTABCOverrideKey(className, selectorName);
         record.nativeValue = nativeValue;
+        record.nativeCapturedAt = capturedAt;
         record.discoveredIMP = discoveredIMP;
         record.instance = instance;
         record.overrideState = YTABCRuntimeOverrideStateMake();
@@ -331,7 +345,7 @@ void YTABCRuntimeRegisterConfigInstance(
         pthread_mutex_unlock(&YTABCRegistryMutex);
 
         if (existingRecord) {
-            nativeValue = YTABCRefreshRecordNativeSample(existingRecord, instance);
+            nativeValue = YTABCRefreshRecordNativeSample(existingRecord, instance, capturedAt);
         } else if (hierarchyConflict) {
             NSLog(@"[YTABConfig Runtime] Skipping ambiguous hierarchy selector %@.%@", className, selectorName);
             continue;
@@ -344,6 +358,7 @@ void YTABCRuntimeRegisterConfigInstance(
     NSLog(@"[YTABConfig Runtime] Discovered %lu native BOOL flags on %@",
           (unsigned long)classCatalog.count, className);
     YTABCReconcilePersistedOverrides();
+    return classCatalog.count;
 }
 
 static YTABCRuntimeFlagRecord *YTABCValidatedRecord(NSString *className, NSString *selectorName) {
@@ -428,20 +443,37 @@ NSDictionary<NSString *, NSDictionary<NSString *, id> *> *YTABCRuntimeSnapshot(v
     NSArray<YTABCRuntimeFlagRecord *> *records = YTABCRecords.allValues.copy;
     pthread_mutex_unlock(&YTABCRegistryMutex);
 
+    NSString *capturedAt = YTABCCurrentTimestamp();
     NSMutableDictionary *snapshot = [NSMutableDictionary dictionaryWithCapacity:records.count];
     for (YTABCRuntimeFlagRecord *record in records) {
         NSNumber *override = YTABCOverrideValue(record.className, record.selectorName);
         pthread_mutex_lock(&YTABCRegistryMutex);
         BOOL hookInstalled = record.overrideState.hookInstalled;
-        BOOL nativeValue = record.nativeValue;
+        id instance = record.instance;
+        IMP implementation = record.originalIMP ?: record.discoveredIMP;
+        SEL selector = record.selector;
         pthread_mutex_unlock(&YTABCRegistryMutex);
+
+        NSNumber *native = nil;
+        NSString *nativeCapturedAt = nil;
+        if (instance && implementation) {
+            BOOL nativeValue = YTABCInvokeBOOL(implementation, instance, selector);
+            native = @(nativeValue);
+            nativeCapturedAt = capturedAt;
+            pthread_mutex_lock(&YTABCRegistryMutex);
+            record.nativeValue = nativeValue;
+            record.nativeCapturedAt = capturedAt;
+            pthread_mutex_unlock(&YTABCRegistryMutex);
+        }
+        NSNumber *effective = override ?: native;
         snapshot[YTABCRecordKey(record.className, record.selectorName)] = @{
             @"class": record.className,
             @"selector": record.selectorName,
             @"preferenceKey": record.preferenceKey,
-            @"native": @(nativeValue),
+            @"native": native ?: NSNull.null,
+            @"nativeCapturedAt": nativeCapturedAt ?: NSNull.null,
             @"override": override ?: NSNull.null,
-            @"effective": YTABCEffectiveValue(record.className, record.selectorName) ?: NSNull.null,
+            @"effective": effective ?: NSNull.null,
             @"hookInstalled": @(hookInstalled)
         };
     }

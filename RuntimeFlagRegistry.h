@@ -7,7 +7,8 @@ NS_ASSUME_NONNULL_BEGIN
 FOUNDATION_EXPORT void YTABCRuntimeRegistryStart(NSUserDefaults *defaults);
 
 /// Discovers the nearest known YT config owner surface and records current native values.
-FOUNDATION_EXPORT void YTABCRuntimeRegisterConfigInstance(
+/// Re-registering the same owner safely refreshes its instance and native samples.
+FOUNDATION_EXPORT NSUInteger YTABCRuntimeRegisterConfigInstance(
     id instance,
     NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *nativeCatalog
 );
@@ -22,7 +23,8 @@ FOUNDATION_EXPORT NSNumber * _Nullable YTABCNativeValue(NSString *className, NSS
 FOUNDATION_EXPORT NSNumber * _Nullable YTABCOverrideValue(NSString *className, NSString *selectorName);
 FOUNDATION_EXPORT NSNumber * _Nullable YTABCEffectiveValue(NSString *className, NSString *selectorName);
 
-/// Diagnostic snapshot keyed by "Class.selector".
+/// Diagnostic snapshot keyed by "Class.selector". Samples each live original getter once;
+/// reserve this for explicit reports rather than UI row refreshes.
 FOUNDATION_EXPORT NSDictionary<NSString *, NSDictionary<NSString *, id> *> *YTABCRuntimeSnapshot(void);
 
 NS_ASSUME_NONNULL_END
