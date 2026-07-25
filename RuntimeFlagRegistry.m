@@ -10,6 +10,14 @@ NS_ASSUME_NONNULL_BEGIN
 
 static NSString * const YTABCPersistencePrefix = @"YTABC";
 static NSString * const YTABCExactBoolMethodEncoding = @"B16@0:8";
+static NSArray<NSString *> *YTABCCanonicalConfigClassNames(void) {
+    static NSArray<NSString *> *classNames;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        classNames = @[@"YTGlobalConfig", @"YTColdConfig", @"YTHotConfig"];
+    });
+    return classNames;
+}
 
 @interface YTABCRuntimeFlagRecord : NSObject
 @property(nonatomic, assign) Class ownerClass;
@@ -66,6 +74,43 @@ static BOOL YTABCValidStoredBoolean(id value, BOOL *result) {
 static BOOL YTABCInvokeBOOL(IMP implementation, id target, SEL selector) {
     if (!implementation || !target || !selector) return NO;
     return ((BOOL (*)(id, SEL))implementation)(target, selector);
+}
+
+static NSUserDefaults *YTABCDefaultsSnapshot(void) {
+    pthread_mutex_lock(&YTABCRegistryMutex);
+    NSUserDefaults *defaults = YTABCDefaults;
+    pthread_mutex_unlock(&YTABCRegistryMutex);
+    return defaults;
+}
+
+static Class YTABCCanonicalConfigOwnerClass(id instance) {
+    for (Class currentClass = object_getClass(instance);
+         currentClass != Nil;
+         currentClass = class_getSuperclass(currentClass)) {
+        NSString *currentName = NSStringFromClass(currentClass);
+        if ([YTABCCanonicalConfigClassNames() containsObject:currentName]) return currentClass;
+    }
+    return Nil;
+}
+
+static BOOL YTABCClassIsInHierarchy(Class candidate, Class otherClass) {
+    for (Class currentClass = candidate;
+         currentClass != Nil;
+         currentClass = class_getSuperclass(currentClass)) {
+        if (currentClass == otherClass) return YES;
+    }
+    return NO;
+}
+
+static BOOL YTABCRecordConflictsWithOwnerHierarchy(Class ownerClass, SEL selector) {
+    for (YTABCRuntimeFlagRecord *record in YTABCRecords.allValues) {
+        if (record.selector != selector || record.ownerClass == ownerClass) continue;
+        if (YTABCClassIsInHierarchy(ownerClass, record.ownerClass) ||
+            YTABCClassIsInHierarchy(record.ownerClass, ownerClass)) {
+            return YES;
+        }
+    }
+    return NO;
 }
 
 static YTABCRuntimeFlagRecord *YTABCRecordForRuntimeReceiver(id receiver, SEL selector) {
@@ -129,11 +174,12 @@ static void YTABCReconcilePersistedOverrides(void) {
     YTABCInitializeRegistry();
     pthread_mutex_lock(&YTABCRegistryMutex);
     NSArray<YTABCRuntimeFlagRecord *> *records = YTABCRecords.allValues.copy;
+    NSUserDefaults *defaults = YTABCDefaults;
     pthread_mutex_unlock(&YTABCRegistryMutex);
 
     for (YTABCRuntimeFlagRecord *record in records) {
         BOOL value = NO;
-        id storedValue = [YTABCDefaults objectForKey:record.preferenceKey];
+        id storedValue = [defaults objectForKey:record.preferenceKey];
         if (!YTABCValidStoredBoolean(storedValue, &value)) {
             if (storedValue) {
                 NSLog(@"[YTABConfig Runtime] Ignoring invalid override value for %@", record.preferenceKey);
@@ -157,18 +203,39 @@ static void YTABCReconcilePersistedOverrides(void) {
 
 void YTABCRuntimeRegistryStart(NSUserDefaults *defaults) {
     YTABCInitializeRegistry();
+    NSUserDefaults *selectedDefaults = defaults ?: NSUserDefaults.standardUserDefaults;
+    id observerToRemove = nil;
+
     pthread_mutex_lock(&YTABCRegistryMutex);
-    YTABCDefaults = defaults ?: NSUserDefaults.standardUserDefaults;
-    if (!YTABCDefaultsObserver) {
-        YTABCDefaultsObserver = [NSNotificationCenter.defaultCenter
+    if (YTABCDefaults != selectedDefaults) {
+        observerToRemove = YTABCDefaultsObserver;
+        YTABCDefaultsObserver = nil;
+        YTABCDefaults = selectedDefaults;
+    }
+    BOOL needsObserver = YTABCDefaultsObserver == nil;
+    pthread_mutex_unlock(&YTABCRegistryMutex);
+
+    if (observerToRemove) {
+        [NSNotificationCenter.defaultCenter removeObserver:observerToRemove];
+    }
+    if (needsObserver) {
+        id newObserver = [NSNotificationCenter.defaultCenter
             addObserverForName:NSUserDefaultsDidChangeNotification
-                       object:YTABCDefaults
+                       object:selectedDefaults
                         queue:nil
                    usingBlock:^(__unused NSNotification *notification) {
             YTABCReconcilePersistedOverrides();
         }];
+        pthread_mutex_lock(&YTABCRegistryMutex);
+        if (YTABCDefaults == selectedDefaults && !YTABCDefaultsObserver) {
+            YTABCDefaultsObserver = newObserver;
+            newObserver = nil;
+        }
+        pthread_mutex_unlock(&YTABCRegistryMutex);
+        if (newObserver) {
+            [NSNotificationCenter.defaultCenter removeObserver:newObserver];
+        }
     }
-    pthread_mutex_unlock(&YTABCRegistryMutex);
     YTABCReconcilePersistedOverrides();
 }
 
@@ -192,6 +259,20 @@ static BOOL YTABCSelectorIsExcluded(NSString *selectorName) {
     return [selectorName rangeOfString:@"Android"].location != NSNotFound;
 }
 
+static BOOL YTABCRefreshRecordNativeSample(YTABCRuntimeFlagRecord *record, id instance) {
+    pthread_mutex_lock(&YTABCRegistryMutex);
+    IMP implementation = record.originalIMP ?: record.discoveredIMP;
+    SEL selector = record.selector;
+    pthread_mutex_unlock(&YTABCRegistryMutex);
+
+    BOOL nativeValue = YTABCInvokeBOOL(implementation, instance, selector);
+    pthread_mutex_lock(&YTABCRegistryMutex);
+    record.instance = instance;
+    record.nativeValue = nativeValue;
+    pthread_mutex_unlock(&YTABCRegistryMutex);
+    return nativeValue;
+}
+
 void YTABCRuntimeRegisterConfigInstance(
     id instance,
     NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *nativeCatalog
@@ -202,12 +283,16 @@ void YTABCRuntimeRegisterConfigInstance(
     }
 
     YTABCInitializeRegistry();
-    Class instanceClass = object_getClass(instance);
-    NSString *className = NSStringFromClass(instanceClass);
+    Class ownerClass = YTABCCanonicalConfigOwnerClass(instance);
+    if (!ownerClass) {
+        NSLog(@"[YTABConfig Runtime] Refusing unknown config class %@", NSStringFromClass(object_getClass(instance)));
+        return;
+    }
+    NSString *className = NSStringFromClass(ownerClass);
     NSMutableDictionary<NSString *, NSNumber *> *classCatalog = [NSMutableDictionary dictionary];
 
     unsigned int methodCount = 0;
-    Method *methods = class_copyMethodList(instanceClass, &methodCount);
+    Method *methods = class_copyMethodList(ownerClass, &methodCount);
     for (unsigned int index = 0; index < methodCount; ++index) {
         Method method = methods[index];
         if (!YTABCMethodIsEligible(method)) continue;
@@ -221,16 +306,15 @@ void YTABCRuntimeRegisterConfigInstance(
         YTABCRuntimeFlagRecord *existingRecord = YTABCRecords[recordKey];
         pthread_mutex_unlock(&YTABCRegistryMutex);
         if (existingRecord) {
-            classCatalog[selectorName] = @(existingRecord.nativeValue);
+            classCatalog[selectorName] = @(YTABCRefreshRecordNativeSample(existingRecord, instance));
             continue;
         }
 
         IMP discoveredIMP = method_getImplementation(method);
         BOOL nativeValue = YTABCInvokeBOOL(discoveredIMP, instance, selector);
-        classCatalog[selectorName] = @(nativeValue);
 
         YTABCRuntimeFlagRecord *record = [YTABCRuntimeFlagRecord new];
-        record.ownerClass = instanceClass;
+        record.ownerClass = ownerClass;
         record.selector = selector;
         record.className = className;
         record.selectorName = selectorName;
@@ -241,8 +325,18 @@ void YTABCRuntimeRegisterConfigInstance(
         record.overrideState = YTABCRuntimeOverrideStateMake();
 
         pthread_mutex_lock(&YTABCRegistryMutex);
-        if (!YTABCRecords[recordKey]) YTABCRecords[recordKey] = record;
+        existingRecord = YTABCRecords[recordKey];
+        BOOL hierarchyConflict = YTABCRecordConflictsWithOwnerHierarchy(ownerClass, selector);
+        if (!existingRecord && !hierarchyConflict) YTABCRecords[recordKey] = record;
         pthread_mutex_unlock(&YTABCRegistryMutex);
+
+        if (existingRecord) {
+            nativeValue = YTABCRefreshRecordNativeSample(existingRecord, instance);
+        } else if (hierarchyConflict) {
+            NSLog(@"[YTABConfig Runtime] Skipping ambiguous hierarchy selector %@.%@", className, selectorName);
+            continue;
+        }
+        classCatalog[selectorName] = @(nativeValue);
     }
     free(methods);
 
@@ -268,7 +362,7 @@ BOOL YTABCSetOverride(NSString *className, NSString *selectorName, BOOL value) {
         return NO;
     }
 
-    [YTABCDefaults setBool:value forKey:record.preferenceKey];
+    [YTABCDefaultsSnapshot() setBool:value forKey:record.preferenceKey];
     pthread_mutex_lock(&YTABCRegistryMutex);
     YTABCRuntimeOverrideState state = record.overrideState;
     YTABCRuntimeOverrideStateSetOverride(&state, value);
@@ -285,7 +379,7 @@ BOOL YTABCClearOverride(NSString *className, NSString *selectorName) {
         return NO;
     }
 
-    [YTABCDefaults removeObjectForKey:record.preferenceKey];
+    [YTABCDefaultsSnapshot() removeObjectForKey:record.preferenceKey];
     pthread_mutex_lock(&YTABCRegistryMutex);
     YTABCRuntimeOverrideState state = record.overrideState;
     YTABCRuntimeOverrideStateClearOverride(&state);
@@ -309,7 +403,7 @@ NSNumber *YTABCOverrideValue(NSString *className, NSString *selectorName) {
     YTABCRuntimeFlagRecord *record = YTABCValidatedRecord(className, selectorName);
     if (!record) return nil;
     BOOL value = NO;
-    return YTABCValidStoredBoolean([YTABCDefaults objectForKey:record.preferenceKey], &value) ? @(value) : nil;
+    return YTABCValidStoredBoolean([YTABCDefaultsSnapshot() objectForKey:record.preferenceKey], &value) ? @(value) : nil;
 }
 
 NSNumber *YTABCEffectiveValue(NSString *className, NSString *selectorName) {

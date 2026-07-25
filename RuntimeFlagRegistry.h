@@ -3,10 +3,10 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-/// Starts preference reconciliation. Safe to call more than once.
+/// Starts preference reconciliation. Repeated calls safely rebind to the supplied defaults object.
 FOUNDATION_EXPORT void YTABCRuntimeRegistryStart(NSUserDefaults *defaults);
 
-/// Discovers the exact BOOL/no-argument flag surface and records native values.
+/// Discovers the nearest known YT config owner surface and records current native values.
 FOUNDATION_EXPORT void YTABCRuntimeRegisterConfigInstance(
     id instance,
     NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *nativeCatalog

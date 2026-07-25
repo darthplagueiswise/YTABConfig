@@ -12,6 +12,7 @@
 #import <YouTubeHeader/YTUIUtils.h>
 #import <YouTubeHeader/YTVersionUtils.h>
 #import <pthread.h>
+#import "RuntimeFlagRegistry.h"
 #import "YTABLabUI.h"
 
 #define Prefix @"YTABC"
@@ -75,8 +76,15 @@ NSString *getKey(NSString *method, NSString *classKey) {
     return fullKey;
 }
 
-static NSString *getCacheKey(NSString *method, NSString *classKey) {
-    return [NSString stringWithFormat:KeyFormatString, classKey, method];
+static BOOL YTABCParseRuntimeKey(NSString *runtimeKey, NSString **classKey, NSString **selector) {
+    NSRange separator = [runtimeKey rangeOfString:@"."];
+    if (separator.location == NSNotFound || separator.location == 0 ||
+        separator.location + 1 >= runtimeKey.length) {
+        return NO;
+    }
+    if (classKey) *classKey = [runtimeKey substringToIndex:separator.location];
+    if (selector) *selector = [runtimeKey substringFromIndex:separator.location + 1];
+    return YES;
 }
 
 BOOL getValue(NSString *methodKey) {
@@ -96,18 +104,26 @@ BOOL getValue(NSString *methodKey) {
 }
 
 static void setValue(NSString *method, NSString *classKey, BOOL value) {
-    pthread_mutex_lock(&cacheMutex);
-    [cache setValue:@(value) forKeyPath:getCacheKey(method, classKey)];
-    pthread_mutex_unlock(&cacheMutex);
-    [defaults setBool:value forKey:getKey(method, classKey)];
+    if (!YTABCSetOverride(classKey, method, value)) {
+        [defaults setBool:value forKey:getKey(method, classKey)];
+    }
     allKeysNeedsUpdate = YES;
 }
 
 static void setValueFromImport(NSString *settingKey, BOOL value) {
-    pthread_mutex_lock(&cacheMutex);
-    [cache setValue:@(value) forKeyPath:settingKey];
-    pthread_mutex_unlock(&cacheMutex);
-    [defaults setBool:value forKey:[NSString stringWithFormat:KeyFormatString, Prefix, settingKey]];
+    NSString *classKey = nil;
+    NSString *selector = nil;
+    if (!YTABCParseRuntimeKey(settingKey, &classKey, &selector) ||
+        !YTABCSetOverride(classKey, selector, value)) {
+        [defaults setBool:value forKey:[NSString stringWithFormat:KeyFormatString, Prefix, settingKey]];
+    }
+    allKeysNeedsUpdate = YES;
+}
+
+static void clearValue(NSString *method, NSString *classKey) {
+    if (!YTABCClearOverride(classKey, method)) {
+        [defaults removeObjectForKey:getKey(method, classKey)];
+    }
     allKeysNeedsUpdate = YES;
 }
 
@@ -138,38 +154,47 @@ NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *YTABCopyRuntim
     return [snapshot copy];
 }
 
+static BOOL YTABCValidOverrideNumber(id value) {
+    if (![value isKindOfClass:[NSNumber class]]) return NO;
+    double numericValue = [value doubleValue];
+    return numericValue == 0.0 || numericValue == 1.0;
+}
+
 NSDictionary<NSString *, NSNumber *> *YTABCopyOverrideValues() {
     NSDictionary *representation = [defaults dictionaryRepresentation];
     NSMutableDictionary *overrides = [NSMutableDictionary dictionary];
     [representation enumerateKeysAndObjectsUsingBlock:^(NSString *key, id value, BOOL *stop) {
-        if ([key hasPrefix:@"YTABC."] && [value isKindOfClass:[NSNumber class]]) overrides[key] = value;
+        if ([key hasPrefix:@"YTABC."] && YTABCValidOverrideNumber(value)) overrides[key] = value;
     }];
     return [overrides copy];
 }
 
-void YTABSetRuntimeOverride(NSString *sourceClass, NSString *selector, BOOL value) {
-    setValue(selector, sourceClass, value);
+BOOL YTABSetRuntimeOverride(NSString *sourceClass, NSString *selector, BOOL value) {
+    BOOL success = YTABCSetOverride(sourceClass, selector, value);
+    if (success) allKeysNeedsUpdate = YES;
+    return success;
 }
 
-void YTABResetRuntimeOverride(NSString *sourceClass, NSString *selector, BOOL nativeValue) {
-    NSString *fullKey = getKey(selector, sourceClass);
-    pthread_mutex_lock(&cacheMutex);
-    if (cache[sourceClass][selector]) cache[sourceClass][selector] = @(nativeValue);
-    pthread_mutex_unlock(&cacheMutex);
-    [defaults removeObjectForKey:fullKey];
-    allKeysNeedsUpdate = YES;
+BOOL YTABResetRuntimeOverride(NSString *sourceClass, NSString *selector, BOOL nativeValue) {
+    (void)nativeValue;
+    BOOL success = YTABCClearOverride(sourceClass, selector);
+    if (success) allKeysNeedsUpdate = YES;
+    return success;
 }
 
 void YTABResetAllRuntimeOverrides(NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *nativeValues) {
-    NSDictionary *overrides = YTABCopyOverrideValues();
-    for (NSString *key in overrides) [defaults removeObjectForKey:key];
-    pthread_mutex_lock(&cacheMutex);
-    [nativeValues enumerateKeysAndObjectsUsingBlock:^(NSString *classKey, NSDictionary *methods, BOOL *stop) {
-        [methods enumerateKeysAndObjectsUsingBlock:^(NSString *selector, NSNumber *value, BOOL *innerStop) {
-            if (cache[classKey][selector]) cache[classKey][selector] = value;
-        }];
-    }];
-    pthread_mutex_unlock(&cacheMutex);
+    (void)nativeValues;
+    NSDictionary *representation = [defaults dictionaryRepresentation];
+    for (NSString *key in representation) {
+        if (![key hasPrefix:@"YTABC."]) continue;
+        NSString *runtimeKey = [key substringFromIndex:[@"YTABC." length]];
+        NSString *classKey = nil;
+        NSString *selector = nil;
+        if (!YTABCParseRuntimeKey(runtimeKey, &classKey, &selector) ||
+            !YTABCClearOverride(classKey, selector)) {
+            [defaults removeObjectForKey:key];
+        }
+    }
     allKeysNeedsUpdate = YES;
 }
 
@@ -328,8 +353,7 @@ static NSString *getCategory(char c, NSString *method) {
                             NSString *key = getKey(method, classKey);
                             if ([allKeysSet containsObject:key]) {
                                 [alertView addTitle:deleteText withAction:^{
-                                    [defaults removeObjectForKey:key];
-                                    allKeysNeedsUpdate = YES;
+                                    clearValue(method, classKey);
                                     updateAllKeys();
                                 }];
                             }
@@ -549,9 +573,10 @@ static NSString *getCategory(char c, NSString *method) {
                         accessibilityIdentifier:nil
                         switchOn:[defaults boolForKey:fullKey]
                         switchBlock:^BOOL (YTSettingsCell *toggleCell, BOOL enabled) {
-                            [defaults setBool:enabled forKey:fullKey];
-                            if (components.count > 1) {
-                                [cache setValue:@(enabled) forKeyPath:displayKey];
+                            if (!isRemoved && components.count > 1) {
+                                NSString *classKey = components[0];
+                                NSString *selector = [displayKey substringFromIndex:classKey.length + 1];
+                                setValue(selector, classKey, enabled);
                             }
                             return YES;
                         }
@@ -565,8 +590,14 @@ static NSString *getCategory(char c, NSString *method) {
                                 [[%c(GOOHUDManagerInternal) sharedInstance] showMessageMainThread:[%c(YTHUDMessage) messageWithText:LOC(@"COPIED_TO_CLIPBOARD")]];
                             }];
                             [alertView addTitle:deleteText withAction:^{
-                                [defaults removeObjectForKey:fullKey];
-                                allKeysNeedsUpdate = YES;
+                                if (!isRemoved && components.count > 1) {
+                                    NSString *classKey = components[0];
+                                    NSString *selector = [displayKey substringFromIndex:classKey.length + 1];
+                                    clearValue(selector, classKey);
+                                } else {
+                                    [defaults removeObjectForKey:fullKey];
+                                    allKeysNeedsUpdate = YES;
+                                }
                                 updateAllKeys();
                             }];
                             [alertView addCancelButton:NULL];
