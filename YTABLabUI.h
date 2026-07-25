@@ -1,5 +1,7 @@
 #import <UIKit/UIKit.h>
 
+NS_ASSUME_NONNULL_BEGIN
+
 @class YTABLabFlag;
 
 FOUNDATION_EXPORT NSString * const YTABLabMetadataTitleKey;
@@ -13,17 +15,19 @@ FOUNDATION_EXPORT NSString * const YTABLabMetadataDocumentedKey;
 // Catalog providers return only verified fields. Omitted fields deliberately
 // render as Unknown / Needs Research; the UI never guesses descriptions.
 @protocol YTABLabCatalogProviding <NSObject>
-- (NSDictionary<NSString *, id> *)metadataForSelector:(NSString *)selector
-                                           sourceClass:(NSString *)sourceClass;
+- (nullable NSDictionary<NSString *, id> *)metadataForSelector:(NSString *)selector
+                                                    sourceClass:(NSString *)sourceClass;
 @end
 
 @protocol YTABLabRuntimeProviding <NSObject>
 - (NSArray<YTABLabFlag *> *)allFlags;
-- (void)setOverrideValue:(BOOL)value forFlag:(YTABLabFlag *)flag;
-- (void)resetOverrideForFlag:(YTABLabFlag *)flag;
-- (void)resetAllOverrides;
+- (BOOL)setOverrideValue:(BOOL)value forFlag:(YTABLabFlag *)flag;
+- (BOOL)resetOverrideForFlag:(YTABLabFlag *)flag;
+- (BOOL)resetAllOverrides;
 - (NSString *)exportText;
 - (NSUInteger)importText:(NSString *)text;
+@optional
+- (nullable YTABLabFlag *)refreshedFlagMatchingFlag:(YTABLabFlag *)flag;
 @end
 
 @interface YTABLabFlag : NSObject
@@ -39,6 +43,7 @@ FOUNDATION_EXPORT NSString * const YTABLabMetadataDocumentedKey;
 @property(nonatomic, assign, readonly) BOOL nativeValue;
 @property(nonatomic, assign, readonly) BOOL effectiveValue;
 @property(nonatomic, assign, readonly) BOOL hasNativeValue;
+@property(nonatomic, assign, readonly) BOOL hasEffectiveValue;
 @property(nonatomic, assign, readonly) BOOL hasOverride;
 @property(nonatomic, assign, readonly) BOOL documented;
 @property(nonatomic, assign, readonly) BOOL removed;
@@ -46,9 +51,11 @@ FOUNDATION_EXPORT NSString * const YTABLabMetadataDocumentedKey;
 @end
 
 @interface YTABLegacyRuntimeAdapter : NSObject <YTABLabRuntimeProviding>
-- (instancetype)initWithCatalog:(id<YTABLabCatalogProviding>)catalog;
+- (instancetype)initWithCatalog:(nullable id<YTABLabCatalogProviding>)catalog;
 @end
 
 @interface YTABLabDashboardViewController : UITableViewController
 - (instancetype)initWithProvider:(id<YTABLabRuntimeProviding>)provider;
 @end
+
+NS_ASSUME_NONNULL_END
