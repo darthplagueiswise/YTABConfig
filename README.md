@@ -9,6 +9,9 @@ being presented as a promise.
 
 - Runs inside the iOS YouTube app; YouTube 16.29.4 and newer are the supported
   baseline.
+- Raw Lab enumerates the three live Objective-C config classes from the
+  installed YouTube build. Runtime behavior is not gated by a catalog version
+  or by hard-coded expected counts.
 - Uses the established `com.ps.ytabconfig` package identity and existing
   `YTABC` preferences, so this 2.0.0 fork release upgrades without discarding
   existing choices.
@@ -18,11 +21,31 @@ being presented as a promise.
   Discussions](https://github.com/afterglow-labs/YTABConfig/discussions), and
   report defects through [GitHub Issues](https://github.com/afterglow-labs/YTABConfig/issues).
 
+## Live runtime workflow
+
+Launch-time work is intentionally bounded. The tweak registers the current
+`YTGlobalConfig`, `YTColdConfig`, and `YTHotConfig` instances and hooks only
+valid selectors that already have persisted overrides. It does not invoke the
+complete flag surface while YouTube is launching.
+
+Opening Feature Lab enumerates the live BOOL method lists without invoking
+their getters. Native values are sampled on demand for visible rows. A full
+report samples the live values on the main queue in bounded batches so the app
+can continue servicing its run loop.
+
+The YouTube 21.30.5 arm64 binary was audited as a compatibility fixture. The
+three config classes are in the main executable (there is no
+`Module_Framework.framework`) and expose 9,449 BOOL getters before the existing
+platform-prefix exclusions, or 6,240 Raw Lab flags after them. These figures
+are diagnostic evidence only; they are never compiled into the runtime.
+
 ## Catalog workflow
 
 Raw Lab discovers the live flag list at runtime. The committed catalog contains
 only reviewed metadata; full decompile catalogs are generated on demand and are
-not shipped in the tweak.
+not shipped in the tweak. A catalog is loaded only when its `youtubeVersion`
+matches the installed app, so the 21.28.3 seed cannot describe a 21.30.5
+runtime as verified.
 
 ```bash
 python3 tools/catalog_extractor.py "/path/to/YouTube (YT)" \

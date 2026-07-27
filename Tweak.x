@@ -5,18 +5,12 @@
 
 #import "RuntimeFlagRegistry.h"
 
-#import <pthread.h>
-
-NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *cache;
-
-extern pthread_mutex_t cacheMutex;
 extern void SearchHook(void);
 extern BOOL tweakEnabled(void);
 extern BOOL groupedSettings(void);
 
 typedef struct {
     NSUInteger availableConfigCount;
-    NSUInteger discoveredFlagCount;
 } YTABCRegistrationResult;
 
 static id YTABCSafeValueForKey(id object, NSString *key, NSString *context) {
@@ -50,16 +44,15 @@ static YTABCRegistrationResult YTABCRegisterAvailableConfigs(
         if (instance) [instances addObject:instance];
     }
 
-    NSUInteger flagCount = 0;
-    pthread_mutex_lock(&cacheMutex);
+    NSUInteger availableConfigCount = 0;
     for (id instance in instances) {
-        flagCount += YTABCRuntimeRegisterConfigInstance(instance, cache);
+        if (YTABCRuntimeRegisterConfigInstance(instance)) availableConfigCount++;
     }
-    pthread_mutex_unlock(&cacheMutex);
+    YTABCRuntimeApplyPersistedOverrides();
 
-    NSLog(@"[YTABConfig Runtime] %@ registration found %lu/3 configs and %lu flags",
-          context, (unsigned long)instances.count, (unsigned long)flagCount);
-    YTABCRegistrationResult result = { instances.count, flagCount };
+    NSLog(@"[YTABConfig Runtime] %@ registered %lu/3 live config instances without sampling getters",
+          context, (unsigned long)availableConfigCount);
+    YTABCRegistrationResult result = { availableConfigCount };
     return result;
 }
 
@@ -68,11 +61,10 @@ static void YTABCScheduleBoundedRegistrationRetry(YTAppDelegate *delegate) {
     dispatch_once(&retryOnceToken, ^{
         dispatch_async(dispatch_get_main_queue(), ^{
             YTABCRegistrationResult retry = YTABCRegisterAvailableConfigs(delegate, @"bounded-retry");
-            if (retry.availableConfigCount < 3 || retry.discoveredFlagCount == 0) {
-                NSLog(@"[YTABConfig Runtime] Bounded retry incomplete: %lu/3 configs, %lu flags. "
-                      "YouTube 21.28.3 private config ownership may have changed.",
-                      (unsigned long)retry.availableConfigCount,
-                      (unsigned long)retry.discoveredFlagCount);
+            if (retry.availableConfigCount < 3) {
+                NSLog(@"[YTABConfig Runtime] Bounded retry incomplete: %lu/3 live configs. "
+                      "The current YouTube runtime ownership may have changed.",
+                      (unsigned long)retry.availableConfigCount);
             }
         });
     });
@@ -82,17 +74,15 @@ static void YTABCScheduleBoundedRegistrationRetry(YTAppDelegate *delegate) {
 
 - (BOOL)application:(id)application didFinishLaunchingWithOptions:(id)options {
     BOOL enabled = tweakEnabled();
-    YTABCRegistrationResult registration = { 0, 0 };
+    YTABCRegistrationResult registration = { 0 };
     if (enabled) {
         YTABCRuntimeRegistryStart(NSUserDefaults.standardUserDefaults);
         registration = YTABCRegisterAvailableConfigs(self, @"pre-original");
     }
     BOOL result = %orig;
     if (enabled) {
-        if (registration.availableConfigCount < 3 || registration.discoveredFlagCount == 0) {
-            registration = YTABCRegisterAvailableConfigs(self, @"post-original");
-        }
-        if (registration.availableConfigCount < 3 || registration.discoveredFlagCount == 0) {
+        registration = YTABCRegisterAvailableConfigs(self, @"post-original");
+        if (registration.availableConfigCount < 3) {
             YTABCScheduleBoundedRegistrationRetry(self);
         }
         if (!groupedSettings()) SearchHook();
@@ -103,12 +93,10 @@ static void YTABCScheduleBoundedRegistrationRetry(YTAppDelegate *delegate) {
 %end
 
 %ctor {
-    [[NSBundle bundleWithPath:[NSString stringWithFormat:@"%@/Frameworks/Module_Framework.framework",
-                              NSBundle.mainBundle.bundlePath]] load];
-    cache = [NSMutableDictionary dictionary];
+    NSString *modulePath = [NSBundle.mainBundle.bundlePath
+        stringByAppendingPathComponent:@"Frameworks/Module_Framework.framework"];
+    if ([NSFileManager.defaultManager fileExistsAtPath:modulePath]) {
+        [[NSBundle bundleWithPath:modulePath] load];
+    }
     %init;
-}
-
-%dtor {
-    [cache removeAllObjects];
 }

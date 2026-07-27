@@ -6,12 +6,22 @@ NS_ASSUME_NONNULL_BEGIN
 /// Starts preference reconciliation. Repeated calls safely rebind to the supplied defaults object.
 FOUNDATION_EXPORT void YTABCRuntimeRegistryStart(NSUserDefaults *defaults);
 
-/// Discovers the nearest known YT config owner surface and records current native values.
-/// Re-registering the same owner safely refreshes its instance and native samples.
-FOUNDATION_EXPORT NSUInteger YTABCRuntimeRegisterConfigInstance(
-    id instance,
-    NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *nativeCatalog
-);
+/// Registers one live YouTube config instance without enumerating or invoking its flag getters.
+/// Returns YES only for a supported YTGlobalConfig/YTColdConfig/YTHotConfig hierarchy.
+FOUNDATION_EXPORT BOOL YTABCRuntimeRegisterConfigInstance(id instance);
+
+/// Applies only valid persisted overrides whose selectors still exist in the registered runtime.
+/// This path is intentionally proportional to the number of saved overrides, not all live flags.
+FOUNDATION_EXPORT void YTABCRuntimeApplyPersistedOverrides(void);
+
+/// Enumerates the current runtime method lists without invoking any getters.
+/// Call this lazily when the Feature Lab UI is opened.
+FOUNDATION_EXPORT NSUInteger YTABCRuntimeDiscoverFlags(void);
+
+/// Returns every discovered live selector. Values are NSNumber after a native sample, otherwise NSNull.
+FOUNDATION_EXPORT NSDictionary<NSString *, NSDictionary<NSString *, id> *> *
+YTABCRuntimeValuesSnapshot(void);
+FOUNDATION_EXPORT BOOL YTABCRuntimeHasFlag(NSString *className, NSString *selectorName);
 
 /// Stable persisted key used by existing YTABConfig releases.
 FOUNDATION_EXPORT NSString *YTABCOverrideKey(NSString *className, NSString *selectorName);
@@ -23,8 +33,11 @@ FOUNDATION_EXPORT NSNumber * _Nullable YTABCNativeValue(NSString *className, NSS
 FOUNDATION_EXPORT NSNumber * _Nullable YTABCOverrideValue(NSString *className, NSString *selectorName);
 FOUNDATION_EXPORT NSNumber * _Nullable YTABCEffectiveValue(NSString *className, NSString *selectorName);
 
-/// Diagnostic snapshot keyed by "Class.selector". Samples each live original getter once;
-/// reserve this for explicit reports rather than UI row refreshes.
+/// Samples all discovered native getters on the main queue in bounded batches.
+/// Intended for an explicit user action such as exporting a full runtime report.
+FOUNDATION_EXPORT void YTABCRuntimeRefreshAllNativeValues(dispatch_block_t completion);
+
+/// Diagnostic snapshot keyed by "Class.selector". Never invokes a getter.
 FOUNDATION_EXPORT NSDictionary<NSString *, NSDictionary<NSString *, id> *> *YTABCRuntimeSnapshot(void);
 
 NS_ASSUME_NONNULL_END

@@ -24,13 +24,19 @@ reject_text() {
 require_text RuntimeFlagRegistry.m "YTABCCanonicalConfigOwnerClass"
 require_text RuntimeFlagRegistry.m "YTABCRecordConflictsWithOwnerHierarchy"
 require_text RuntimeFlagRegistry.m "YTABCRecordsBySelector[selectorName]"
-require_text RuntimeFlagRegistry.m "YTABCRefreshRecordNativeSample"
+require_text RuntimeFlagRegistry.m "YTABCRuntimeDiscoverFlags"
+require_text RuntimeFlagRegistry.m "YTABCRuntimeApplyPersistedOverrides"
+require_text RuntimeFlagRegistry.m "YTABCNativeRefreshBatchSize"
 require_text RuntimeFlagRegistry.m "YTABCDefaultsSnapshot"
 require_text RuntimeFlagRegistry.m "removeObserver:observerToRemove"
-require_text RuntimeFlagRegistry.h "FOUNDATION_EXPORT NSUInteger YTABCRuntimeRegisterConfigInstance"
+require_text RuntimeFlagRegistry.h "FOUNDATION_EXPORT BOOL YTABCRuntimeRegisterConfigInstance"
+require_text RuntimeFlagRegistry.h "YTABCRuntimeValuesSnapshot"
+require_text RuntimeFlagRegistry.h "YTABCRuntimeRefreshAllNativeValues"
 require_text RuntimeFlagRegistry.m "nativeCapturedAt"
+require_text RuntimeFlagRegistry.m "hasNativeValue"
 
 require_text Settings.x '#import "RuntimeFlagRegistry.h"'
+require_text Settings.x "YTABCRuntimeDiscoverFlags"
 require_text Settings.x "YTABCSetOverride"
 require_text Settings.x "YTABCClearOverride"
 require_text Settings.x "BOOL YTABSetRuntimeOverride"
@@ -52,10 +58,14 @@ reject_text Settings.x "UIApplicationDidReceiveMemoryWarningNotification"
 
 require_text Tweak.x "YTABCRegisterAvailableConfigs"
 require_text Tweak.x "YTABCScheduleBoundedRegistrationRetry"
-require_text Tweak.x "YTABCRegistrationResult registration = { 0, 0 }"
-require_text Tweak.x "registration.availableConfigCount < 3 || registration.discoveredFlagCount == 0"
+require_text Tweak.x "YTABCRegistrationResult registration = { 0 }"
+require_text Tweak.x "registration.availableConfigCount < 3"
+require_text Tweak.x "without sampling getters"
 require_text Tweak.x "post-original"
 require_text Tweak.x "bounded-retry"
+reject_text Tweak.x "discoveredFlagCount"
+reject_text Tweak.x "YouTube 21.28.3"
+reject_text Tweak.x "YTABCRuntimeDiscoverFlags"
 
 conflict_body="$(sed -n '/^static BOOL YTABCRecordConflictsWithOwnerHierarchy/,/^}/p' RuntimeFlagRegistry.m)"
 if grep -Fq "YTABCRecords.allValues" <<<"$conflict_body"; then
@@ -65,7 +75,25 @@ fi
 
 registration_count="$(grep -Fc 'YTABCRegisterAvailableConfigs(self,' Tweak.x)"
 if [[ "$registration_count" -ne 2 ]]; then
-    echo "expected one primary registration and one conditional fallback, found $registration_count call sites" >&2
+    echo "expected pre/post instance refresh registration, found $registration_count call sites" >&2
+    exit 1
+fi
+
+register_body="$(sed -n '/^BOOL YTABCRuntimeRegisterConfigInstance/,/^}/p' RuntimeFlagRegistry.m)"
+if grep -Fq "YTABCInvokeBOOL" <<<"$register_body"; then
+    echo "launch-time config registration must not invoke native getters" >&2
+    exit 1
+fi
+
+discover_body="$(sed -n '/^NSUInteger YTABCRuntimeDiscoverFlags/,/^}/p' RuntimeFlagRegistry.m)"
+if grep -Fq "YTABCInvokeBOOL" <<<"$discover_body"; then
+    echo "live flag discovery must enumerate metadata without invoking getters" >&2
+    exit 1
+fi
+
+hook_body="$(sed -n '/^static BOOL YTABCRuntimeHook/,/^}/p' RuntimeFlagRegistry.m)"
+if grep -Fq "objectForKey" <<<"$hook_body"; then
+    echo "hot getter hooks must use reconciled in-memory override state" >&2
     exit 1
 fi
 

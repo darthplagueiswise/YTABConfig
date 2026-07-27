@@ -7,7 +7,6 @@
 #import <YouTubeHeader/YTSettingsViewController.h>
 #import <YouTubeHeader/YTUIUtils.h>
 #import <YouTubeHeader/YTVersionUtils.h>
-#import <pthread.h>
 #import "RuntimeFlagRegistry.h"
 #import "YTABCatalogProvider.h"
 #import "YTABLabUI.h"
@@ -25,9 +24,7 @@ static const NSInteger YTABCSection = 404;
 - (void)updateYTABCSectionWithEntry:(id)entry;
 @end
 
-extern NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *cache;
 NSUserDefaults *defaults;
-pthread_mutex_t cacheMutex;
 
 BOOL tweakEnabled() {
     return [defaults boolForKey:EnabledKey];
@@ -62,14 +59,8 @@ static BOOL YTABCParseRuntimeKey(NSString *runtimeKey, NSString **classKey, NSSt
     return YES;
 }
 
-NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *YTABCopyRuntimeValues() {
-    pthread_mutex_lock(&cacheMutex);
-    NSMutableDictionary *snapshot = [NSMutableDictionary dictionaryWithCapacity:cache.count];
-    [cache enumerateKeysAndObjectsUsingBlock:^(NSString *classKey, NSDictionary *methods, BOOL *stop) {
-        snapshot[classKey] = [methods copy];
-    }];
-    pthread_mutex_unlock(&cacheMutex);
-    return [snapshot copy];
+NSDictionary<NSString *, NSDictionary<NSString *, id> *> *YTABCopyRuntimeValues() {
+    return YTABCRuntimeValuesSnapshot();
 }
 
 static BOOL YTABCValidOverrideNumber(id value) {
@@ -105,7 +96,7 @@ BOOL YTABResetRuntimeOverride(NSString *sourceClass, NSString *selector, BOOL na
 }
 
 BOOL YTABResetAllRuntimeOverrides(
-    NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *nativeValues
+    NSDictionary<NSString *, NSDictionary<NSString *, id> *> *nativeValues
 ) {
     (void)nativeValues;
     NSDictionary *representation = [defaults dictionaryRepresentation];
@@ -201,7 +192,6 @@ BOOL YTABResetAllRuntimeOverrides(
 - (void)updateYTABCSectionWithEntry:(id)entry {
     (void)entry;
     NSMutableArray *sectionItems = [NSMutableArray array];
-    int totalSettings = 0;
     NSBundle *tweakBundle = YTABCBundle();
     NSString *yesText = _LOC([NSBundle mainBundle], @"settings.yes");
     NSString *cancelText = _LOC([NSBundle mainBundle], @"confirm.cancel");
@@ -209,9 +199,6 @@ BOOL YTABResetAllRuntimeOverrides(
     Class YTAlertViewClass = %c(YTAlertView);
 
     if (tweakEnabled()) {
-        NSDictionary *runtimeValues = YTABCopyRuntimeValues();
-        for (NSDictionary *methods in runtimeValues.allValues) totalSettings += methods.count;
-
         __block YTSettingsViewController *settingsViewController = nil;
         @try {
             settingsViewController = [self valueForKey:@"_settingsViewControllerDelegate"];
@@ -227,6 +214,10 @@ BOOL YTABResetAllRuntimeOverrides(
                 if (!settingsViewController) {
                     NSLog(@"[YTABConfig Settings] Cannot open Feature Lab without a settings delegate");
                     return NO;
+                }
+                NSUInteger liveFlagCount = YTABCRuntimeDiscoverFlags();
+                if (liveFlagCount == 0) {
+                    NSLog(@"[YTABConfig Runtime] Feature Lab opened without a live flag surface");
                 }
                 id<YTABLabCatalogProviding> catalog = [[YTABCatalogProvider alloc]
                     initWithBundle:YTABCBundle()
@@ -273,8 +264,8 @@ BOOL YTABResetAllRuntimeOverrides(
 
     if (tweakEnabled()) {
         NSString *titleDescription = [NSString stringWithFormat:
-            @"Afterglow Labs Feature Lab %@ • %d runtime flags",
-            @(OS_STRINGIFY(TWEAK_VERSION)), totalSettings];
+            @"Afterglow Labs Feature Lab %@ • live flags load on demand",
+            @(OS_STRINGIFY(TWEAK_VERSION))];
         YTSettingsSectionItem *info = [YTSettingsSectionItemClass itemWithTitle:nil
             titleDescription:titleDescription
             accessibilityIdentifier:nil
@@ -337,12 +328,6 @@ void SearchHook() {
 %ctor {
     defaults = [NSUserDefaults standardUserDefaults];
     [defaults registerDefaults:@{EnabledKey: @YES}];
-
-    pthread_mutexattr_t attr;
-    pthread_mutexattr_init(&attr);
-    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-    pthread_mutex_init(&cacheMutex, &attr);
-    pthread_mutexattr_destroy(&attr);
 
     %init;
 }
