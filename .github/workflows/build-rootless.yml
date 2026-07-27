@@ -76,7 +76,7 @@ jobs:
 
       - name: Cache iOS SDK
         id: sdk-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/theos/sdks/${{ env.SDK_NAME }}
           key: ytabconfig-${{ runner.os }}-${{ runner.arch }}-${{ env.SDK_NAME }}-v1
@@ -92,6 +92,13 @@ jobs:
           mv "$SDK_NAME" "$THEOS/sdks/"
         env:
           THEOS: ${{ github.workspace }}/theos
+
+      - name: Save iOS SDK cache
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/theos/sdks/${{ env.SDK_NAME }}
+          key: ytabconfig-${{ runner.os }}-${{ runner.arch }}-${{ env.SDK_NAME }}-v1
 
       - name: Install private headers
         run: |
@@ -111,7 +118,20 @@ jobs:
           bash Tests/app_catalog_export_static_check.sh
           bash scripts/package_metadata_static_check.sh
           bash scripts/polished_ui_static_check.sh
-          PYTHONPATH="$PWD" python -m unittest discover -s tests -t . -v
+          python - <<'PY'
+          import pathlib
+          import sys
+          import unittest
+
+          sys.path.insert(0, str(pathlib.Path.cwd()))
+          suite = unittest.defaultTestLoader.discover(
+              "tests",
+              pattern="test*.py",
+              top_level_dir=".",
+          )
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          raise SystemExit(0 if result.wasSuccessful() else 1)
+          PY
 
       - name: Read package version
         id: version
