@@ -1,0 +1,168 @@
+name: Build YTABConfig (rootless and dylib)
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_rootless:
+        description: Build rootless deb
+        default: true
+        required: false
+        type: boolean
+      build_dylib:
+        description: Build standalone YTABConfig.dylib and sideload bundle
+        default: true
+        required: false
+        type: boolean
+      upload_artifacts:
+        description: Upload artifacts
+        default: true
+        required: false
+        type: boolean
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build YTABConfig
+    runs-on: macos-latest
+    permissions:
+      contents: read
+
+    env:
+      SDK_NAME: iPhoneOS26.2.sdk
+      BUILD_ROOTLESS: ${{ github.event_name != 'workflow_dispatch' || inputs.build_rootless }}
+      BUILD_DYLIB: ${{ github.event_name != 'workflow_dispatch' || inputs.build_dylib }}
+      UPLOAD_ARTIFACTS: ${{ github.event_name != 'workflow_dispatch' || inputs.upload_artifacts }}
+
+    steps:
+      - name: Validate selection
+        run: |
+          if [ "$BUILD_ROOTLESS" != "true" ] && [ "$BUILD_DYLIB" != "true" ]; then
+            echo "::error::Select at least one build variant."
+            exit 1
+          fi
+
+      - name: Checkout Main
+        uses: actions/checkout@v4
+        with:
+          path: main
+
+      - name: Install Dependencies
+        run: brew install ldid dpkg make
+
+      - name: Set PATH environment variable
+        run: echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+
+      - name: Setup Theos
+        uses: actions/checkout@v4
+        with:
+          repository: theos/theos
+          ref: master
+          path: ${{ github.workspace }}/theos
+          submodules: recursive
+
+      - name: SDK Caching
+        id: SDK
+        uses: actions/cache@v4
+        env:
+          cache-name: iPhoneOS26.2.sdk
+        with:
+          path: ${{ github.workspace }}/theos/sdks/
+          key: ${{ env.cache-name }}
+          restore-keys: ${{ env.cache-name }}
+
+      - name: Download iOS SDK
+        if: steps.SDK.outputs.cache-hit != 'true'
+        run: |
+          git clone --quiet -n --depth=1 --filter=tree:0 https://github.com/xybp888/iOS-SDKs/
+          cd iOS-SDKs
+          git sparse-checkout set --no-cone "$SDK_NAME"
+          git checkout
+          mkdir -p "$THEOS/sdks"
+          mv *.sdk "$THEOS/sdks"
+        env:
+          THEOS: ${{ github.workspace }}/theos
+
+      - name: Install YTABConfig headers
+        run: |
+          mkdir -p "$THEOS/include"
+          git clone --quiet --depth=1 https://github.com/PoomSmart/PSHeader.git \
+            "$THEOS/include/PSHeader"
+          git clone --quiet --depth=1 https://github.com/PoomSmart/YouTubeHeader.git \
+            "$THEOS/include/YouTubeHeader"
+        env:
+          THEOS: ${{ github.workspace }}/theos
+
+      - name: Validate build configuration
+        run: |
+          cd main
+          chmod +x build.sh
+          test -d "$THEOS/sdks/$SDK_NAME"
+          grep -q 'iphone:clang:26.2' Makefile
+          grep -q '^ARCHS = arm64$' Makefile
+          bash -n build.sh
+        env:
+          THEOS: ${{ github.workspace }}/theos
+
+      - name: Get Version
+        id: version
+        run: |
+          VERSION="$(awk '/Version:/ {print $2; exit}' main/control)"
+          test -n "$VERSION"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build rootless deb
+        if: env.BUILD_ROOTLESS == 'true'
+        run: |
+          cd main
+          ./build.sh rootless
+          DEB="$(ls -t packages/*-rootless.deb packages/*.deb 2>/dev/null | head -n1)"
+          test -n "$DEB"
+          cp "$DEB" "packages/YTABConfig_${VERSION}_rootless.deb"
+          dpkg-deb -I "packages/YTABConfig_${VERSION}_rootless.deb"
+          ls -la packages
+        env:
+          THEOS: ${{ github.workspace }}/theos
+          THEOS_PLATFORM_DEB_COMPRESSION_TYPE: lzma
+          THEOS_PLATFORM_DEB_COMPRESSION_LEVEL: 9
+
+      - name: Build standalone YTABConfig.dylib
+        if: env.BUILD_DYLIB == 'true'
+        run: |
+          cd main
+          ./build.sh dylib
+          mv packages/YTABConfig.dylib "packages/YTABConfig_v${VERSION}.dylib"
+          mv packages/YTABConfig-sideload.zip \
+            "packages/YTABConfig_v${VERSION}_sideload.zip"
+          test "$(lipo -archs "packages/YTABConfig_v${VERSION}.dylib")" = "arm64"
+          otool -L "packages/YTABConfig_v${VERSION}.dylib"
+          ls -la packages
+        env:
+          THEOS: ${{ github.workspace }}/theos
+
+      - name: Upload rootless deb
+        if: env.UPLOAD_ARTIFACTS == 'true' && env.BUILD_ROOTLESS == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: YTABConfig_${{ steps.version.outputs.version }}_rootless
+          path: main/packages/YTABConfig_${{ steps.version.outputs.version }}_rootless.deb
+          if-no-files-found: error
+
+      - name: Upload YTABConfig sideload files
+        if: env.UPLOAD_ARTIFACTS == 'true' && env.BUILD_DYLIB == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: YTABConfig_dylib_v${{ steps.version.outputs.version }}
+          path: |
+            main/packages/YTABConfig_v${{ steps.version.outputs.version }}.dylib
+            main/packages/YTABConfig_v${{ steps.version.outputs.version }}_sideload.zip
+          if-no-files-found: error

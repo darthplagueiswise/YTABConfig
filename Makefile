@@ -1,9 +1,9 @@
 ifeq ($(THEOS_PACKAGE_SCHEME),rootless)
-	TARGET = iphone:clang:latest:15.0
+	TARGET := iphone:clang:26.2:15.0
 else ifeq ($(THEOS_PACKAGE_SCHEME),roothide)
-	TARGET = iphone:clang:latest:15.0
+	TARGET := iphone:clang:26.2:15.0
 else
-	TARGET = iphone:clang:latest:11.0
+	TARGET := iphone:clang:26.2:11.0
 endif
 INSTALL_TARGET_PROCESSES = YouTube
 ARCHS = arm64
@@ -18,3 +18,8 @@ $(TWEAK_NAME)_CFLAGS = -fobjc-arc -DTWEAK_VERSION=$(PACKAGE_VERSION)
 $(TWEAK_NAME)_FRAMEWORKS = UIKit
 
 include $(THEOS_MAKE_PATH)/tweak.mk
+
+ifeq ($(FINALPACKAGE),1)
+after-all::
+	@ldid -S "$(THEOS_OBJ_DIR)/$(TWEAK_NAME).dylib"
+endif
