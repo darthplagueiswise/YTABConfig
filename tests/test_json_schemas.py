@@ -4,7 +4,10 @@ import unittest
 from importlib.util import find_spec
 from pathlib import Path
 
-from tests.test_catalog_model import minimal_catalog
+if __package__:
+    from .test_catalog_model import minimal_catalog
+else:
+    from test_catalog_model import minimal_catalog
 from tools.report_provider import build_runtime_export
 
 
