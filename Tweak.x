@@ -56,38 +56,21 @@ static YTABCRegistrationResult YTABCRegisterAvailableConfigs(
     return result;
 }
 
-static void YTABCScheduleBoundedRegistrationRetry(YTAppDelegate *delegate) {
-    static dispatch_once_t retryOnceToken;
-    dispatch_once(&retryOnceToken, ^{
-        dispatch_async(dispatch_get_main_queue(), ^{
-            YTABCRegistrationResult retry = YTABCRegisterAvailableConfigs(delegate, @"bounded-retry");
-            if (retry.availableConfigCount < 3) {
-                NSLog(@"[YTABConfig Runtime] Bounded retry incomplete: %lu/3 live configs. "
-                      "The current YouTube runtime ownership may have changed.",
-                      (unsigned long)retry.availableConfigCount);
-            }
-        });
-    });
-}
-
 %hook YTAppDelegate
 
 - (BOOL)application:(id)application didFinishLaunchingWithOptions:(id)options {
-    BOOL enabled = tweakEnabled();
-    YTABCRegistrationResult registration = { 0 };
-    if (enabled) {
+    if (tweakEnabled()) {
         YTABCRuntimeRegistryStart(NSUserDefaults.standardUserDefaults);
-        registration = YTABCRegisterAvailableConfigs(self, @"pre-original");
-    }
-    BOOL result = %orig;
-    if (enabled) {
-        registration = YTABCRegisterAvailableConfigs(self, @"post-original");
+        YTABCRegistrationResult registration =
+            YTABCRegisterAvailableConfigs(self, @"pre-original");
         if (registration.availableConfigCount < 3) {
-            YTABCScheduleBoundedRegistrationRetry(self);
+            NSLog(@"[YTABConfig Runtime] Launch registration incomplete: %lu/3 live configs. "
+                  "Continuing YouTube startup without a retry.",
+                  (unsigned long)registration.availableConfigCount);
         }
         if (!groupedSettings()) SearchHook();
     }
-    return result;
+    return %orig;
 }
 
 %end

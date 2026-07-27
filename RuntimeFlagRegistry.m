@@ -45,7 +45,6 @@ static NSMutableDictionary<NSString *, NSMutableArray<YTABCRuntimeFlagRecord *> 
 static NSMapTable<NSString *, id> *YTABCInstancesByClassName;
 static NSMutableSet<NSString *> *YTABCActiveOverrideRecordKeys;
 static NSUserDefaults *YTABCDefaults;
-static id _Nullable YTABCDefaultsObserver;
 static pthread_mutex_t YTABCRegistryMutex;
 static dispatch_once_t YTABCRegistryOnce;
 
@@ -389,38 +388,9 @@ void YTABCRuntimeApplyPersistedOverrides(void) {
 void YTABCRuntimeRegistryStart(NSUserDefaults *defaults) {
     YTABCInitializeRegistry();
     NSUserDefaults *selectedDefaults = defaults ?: NSUserDefaults.standardUserDefaults;
-    id observerToRemove = nil;
-
     pthread_mutex_lock(&YTABCRegistryMutex);
-    if (YTABCDefaults != selectedDefaults) {
-        observerToRemove = YTABCDefaultsObserver;
-        YTABCDefaultsObserver = nil;
-        YTABCDefaults = selectedDefaults;
-    }
-    BOOL needsObserver = YTABCDefaultsObserver == nil;
+    YTABCDefaults = selectedDefaults;
     pthread_mutex_unlock(&YTABCRegistryMutex);
-
-    if (observerToRemove) {
-        [NSNotificationCenter.defaultCenter removeObserver:observerToRemove];
-    }
-    if (needsObserver) {
-        id newObserver = [NSNotificationCenter.defaultCenter
-            addObserverForName:NSUserDefaultsDidChangeNotification
-                       object:selectedDefaults
-                        queue:nil
-                   usingBlock:^(__unused NSNotification *notification) {
-            YTABCRuntimeApplyPersistedOverrides();
-        }];
-        pthread_mutex_lock(&YTABCRegistryMutex);
-        if (YTABCDefaults == selectedDefaults && !YTABCDefaultsObserver) {
-            YTABCDefaultsObserver = newObserver;
-            newObserver = nil;
-        }
-        pthread_mutex_unlock(&YTABCRegistryMutex);
-        if (newObserver) {
-            [NSNotificationCenter.defaultCenter removeObserver:newObserver];
-        }
-    }
 }
 
 BOOL YTABCRuntimeRegisterConfigInstance(id instance) {

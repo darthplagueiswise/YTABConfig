@@ -3,7 +3,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-/// Starts preference reconciliation. Repeated calls safely rebind to the supplied defaults object.
+/// Selects the defaults store used by the runtime registry.
+/// Preference changes from the Feature Lab are reconciled directly by the set/clear APIs.
 FOUNDATION_EXPORT void YTABCRuntimeRegistryStart(NSUserDefaults *defaults);
 
 /// Registers one live YouTube config instance without enumerating or invoking its flag getters.
