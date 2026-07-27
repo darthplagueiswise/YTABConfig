@@ -116,6 +116,12 @@ jobs:
         env:
           THEOS: ${{ github.workspace }}/theos
 
+      - name: Validate Python contracts
+        run: |
+          python3 -m pip install --disable-pip-version-check jsonschema
+          cd main
+          python3 -m unittest discover -s tests -t . -v
+
       - name: Get Version
         id: version
         run: |
