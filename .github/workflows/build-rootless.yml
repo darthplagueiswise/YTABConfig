@@ -109,6 +109,10 @@ jobs:
           grep -q 'iphone:clang:26.2' Makefile
           grep -q '^ARCHS = arm64$' Makefile
           bash -n build.sh
+          bash Tests/runtime_registry_static_check.sh
+          bash Tests/app_catalog_export_static_check.sh
+          bash scripts/package_metadata_static_check.sh
+          bash scripts/polished_ui_static_check.sh
         env:
           THEOS: ${{ github.workspace }}/theos
 

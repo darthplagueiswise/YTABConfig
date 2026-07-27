@@ -81,18 +81,19 @@ static void YTABCScheduleBoundedRegistrationRetry(YTAppDelegate *delegate) {
 %hook YTAppDelegate
 
 - (BOOL)application:(id)application didFinishLaunchingWithOptions:(id)options {
-    if (tweakEnabled()) {
+    BOOL enabled = tweakEnabled();
+    YTABCRegistrationResult registration = { 0, 0 };
+    if (enabled) {
         YTABCRuntimeRegistryStart(NSUserDefaults.standardUserDefaults);
-        YTABCRegisterAvailableConfigs(self, @"pre-original");
+        registration = YTABCRegisterAvailableConfigs(self, @"pre-original");
     }
     BOOL result = %orig;
-    if (tweakEnabled()) {
-        YTABCRegistrationResult postOriginal = YTABCRegisterAvailableConfigs(self, @"post-original");
-        if (postOriginal.availableConfigCount < 3) {
+    if (enabled) {
+        if (registration.availableConfigCount < 3 || registration.discoveredFlagCount == 0) {
+            registration = YTABCRegisterAvailableConfigs(self, @"post-original");
+        }
+        if (registration.availableConfigCount < 3 || registration.discoveredFlagCount == 0) {
             YTABCScheduleBoundedRegistrationRetry(self);
-        } else if (postOriginal.discoveredFlagCount == 0) {
-            NSLog(@"[YTABConfig Runtime] All config instances were present post-original, but no eligible "
-                  "BOOL flags were discovered. Check the YouTube 21.28.3 runtime ABI.");
         }
         if (!groupedSettings()) SearchHook();
     }

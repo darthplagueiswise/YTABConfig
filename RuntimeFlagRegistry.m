@@ -37,6 +37,7 @@ static NSArray<NSString *> *YTABCCanonicalConfigClassNames(void) {
 @end
 
 static NSMutableDictionary<NSString *, YTABCRuntimeFlagRecord *> *YTABCRecords;
+static NSMutableDictionary<NSString *, NSMutableArray<YTABCRuntimeFlagRecord *> *> *YTABCRecordsBySelector;
 static NSUserDefaults *YTABCDefaults;
 static id _Nullable YTABCDefaultsObserver;
 static pthread_mutex_t YTABCRegistryMutex;
@@ -45,6 +46,7 @@ static dispatch_once_t YTABCRegistryOnce;
 static void YTABCInitializeRegistry(void) {
     dispatch_once(&YTABCRegistryOnce, ^{
         YTABCRecords = [NSMutableDictionary dictionary];
+        YTABCRecordsBySelector = [NSMutableDictionary dictionary];
         YTABCDefaults = NSUserDefaults.standardUserDefaults;
         pthread_mutexattr_t attributes;
         pthread_mutexattr_init(&attributes);
@@ -109,9 +111,9 @@ static BOOL YTABCClassIsInHierarchy(Class candidate, Class otherClass) {
     return NO;
 }
 
-static BOOL YTABCRecordConflictsWithOwnerHierarchy(Class ownerClass, SEL selector) {
-    for (YTABCRuntimeFlagRecord *record in YTABCRecords.allValues) {
-        if (record.selector != selector || record.ownerClass == ownerClass) continue;
+static BOOL YTABCRecordConflictsWithOwnerHierarchy(Class ownerClass, NSString *selectorName) {
+    for (YTABCRuntimeFlagRecord *record in YTABCRecordsBySelector[selectorName]) {
+        if (record.ownerClass == ownerClass) continue;
         if (YTABCClassIsInHierarchy(ownerClass, record.ownerClass) ||
             YTABCClassIsInHierarchy(record.ownerClass, ownerClass)) {
             return YES;
@@ -340,8 +342,17 @@ NSUInteger YTABCRuntimeRegisterConfigInstance(
 
         pthread_mutex_lock(&YTABCRegistryMutex);
         existingRecord = YTABCRecords[recordKey];
-        BOOL hierarchyConflict = YTABCRecordConflictsWithOwnerHierarchy(ownerClass, selector);
-        if (!existingRecord && !hierarchyConflict) YTABCRecords[recordKey] = record;
+        BOOL hierarchyConflict = YTABCRecordConflictsWithOwnerHierarchy(ownerClass, selectorName);
+        if (!existingRecord && !hierarchyConflict) {
+            YTABCRecords[recordKey] = record;
+            NSMutableArray<YTABCRuntimeFlagRecord *> *selectorRecords =
+                YTABCRecordsBySelector[selectorName];
+            if (!selectorRecords) {
+                selectorRecords = [NSMutableArray array];
+                YTABCRecordsBySelector[selectorName] = selectorRecords;
+            }
+            [selectorRecords addObject:record];
+        }
         pthread_mutex_unlock(&YTABCRegistryMutex);
 
         if (existingRecord) {

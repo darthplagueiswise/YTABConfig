@@ -23,6 +23,7 @@ reject_text() {
 
 require_text RuntimeFlagRegistry.m "YTABCCanonicalConfigOwnerClass"
 require_text RuntimeFlagRegistry.m "YTABCRecordConflictsWithOwnerHierarchy"
+require_text RuntimeFlagRegistry.m "YTABCRecordsBySelector[selectorName]"
 require_text RuntimeFlagRegistry.m "YTABCRefreshRecordNativeSample"
 require_text RuntimeFlagRegistry.m "YTABCDefaultsSnapshot"
 require_text RuntimeFlagRegistry.m "removeObserver:observerToRemove"
@@ -51,8 +52,23 @@ reject_text Settings.x "UIApplicationDidReceiveMemoryWarningNotification"
 
 require_text Tweak.x "YTABCRegisterAvailableConfigs"
 require_text Tweak.x "YTABCScheduleBoundedRegistrationRetry"
+require_text Tweak.x "YTABCRegistrationResult registration = { 0, 0 }"
+require_text Tweak.x "registration.availableConfigCount < 3 || registration.discoveredFlagCount == 0"
 require_text Tweak.x "post-original"
 require_text Tweak.x "bounded-retry"
+
+conflict_body="$(sed -n '/^static BOOL YTABCRecordConflictsWithOwnerHierarchy/,/^}/p' RuntimeFlagRegistry.m)"
+if grep -Fq "YTABCRecords.allValues" <<<"$conflict_body"; then
+    echo "hierarchy conflict lookup must not scan every registered flag" >&2
+    exit 1
+fi
+
+registration_count="$(grep -Fc 'YTABCRegisterAvailableConfigs(self,' Tweak.x)"
+if [[ "$registration_count" -ne 2 ]]; then
+    echo "expected one primary registration and one conditional fallback, found $registration_count call sites" >&2
+    exit 1
+fi
+
 orig_count="$(grep -Ec '(^|[^[:alnum:]_])%orig([^[:alnum:]_]|$)' Tweak.x)"
 if [[ "$orig_count" -ne 1 ]]; then
     echo "expected exactly one %orig in Tweak.x, found $orig_count" >&2
