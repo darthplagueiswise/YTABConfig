@@ -60,6 +60,17 @@ the contained dylib identifies itself as
 `@executable_path/Frameworks/YTABConfig.dylib`. Feather copies `YTABC.bundle`
 from Application Support to the app root.
 
+Start from an IPA that does not already contain YTABConfig. Feather's current
+`moveFileIfNeeded` implementation leaves an existing destination untouched, so
+injecting this deb into an IPA that already has
+`YouTube.app/Frameworks/YTABConfig.dylib` can preserve the old dylib even though
+the new deb was selected. The supplied black-screen fixture had both that old
+file and an existing
+`@executable_path/Frameworks/YTABConfig.dylib` load command. Reusing it as the
+input therefore does not test this build. Use a clean copy of the same YouTube
+version, then add only `YTABConfig_2.0.0_feather.deb`; do not also add the
+rootless deb, standalone injector, or an older YTABConfig dylib.
+
 The recommended layout ZIP is ready to unpack into `YouTube.app/`:
 
 - `Frameworks/YTABConfig.dylib` identifies itself as
@@ -75,10 +86,9 @@ copy it to the root of `YouTube.app/`. Its identity is
 
 Do not combine an `@rpath/YTABConfig.dylib` load command with a
 root-level `YouTube.app/YTABConfig.dylib` unless the executable also has an
-`@executable_path` rpath. The audited YouTube 21.30.5 IPA had only
-`@executable_path/Frameworks`; because its YTABConfig load was weak, that
-mismatch silently skipped the tweak and left the app working without a
-YTABConfig settings menu.
+`@executable_path` rpath. For the Feather artifact, the only supported pairing
+is `YouTube.app/Frameworks/YTABConfig.dylib` with
+`@executable_path/Frameworks/YTABConfig.dylib`.
 
 ## Catalog workflow
 

@@ -24,6 +24,8 @@ require_text build.sh 'SIDELOAD_FRAMEWORKS_ID="@executable_path/Frameworks/${APP
 require_text README.md "# YTABConfig Feature Lab"
 require_text README.md "Original YTABConfig by PoomSmart."
 require_text README.md "[GNU General Public License v3.0](LICENSE)."
+require_text README.md "Start from an IPA that does not already contain YTABConfig. Feather's current"
+require_text README.md 'rootless deb, standalone injector, or an older YTABConfig dylib.'
 require_text "layout/Library/Application Support/YTABC.bundle/en.lproj/Localizable.strings" '"OPEN_MEGATHREAD" = "Original project discussions";'
 
 rootless_scheme_count="$(grep -Fc 'export THEOS_PACKAGE_SCHEME=rootless' build.sh)"
