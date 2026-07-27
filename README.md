@@ -39,11 +39,33 @@ three config classes are in the main executable (there is no
 platform-prefix exclusions, or 6,240 Raw Lab flags after them. These figures
 are diagnostic evidence only; they are never compiled into the runtime.
 
-Both the rootless deb and the standalone sideload ZIP use the rootless Mach-O
-scheme. The embedded dylib identifies itself as `@rpath/YTABConfig.dylib` and
-loads Substrate through `@rpath/CydiaSubstrate.framework/CydiaSubstrate`,
-matching an app-bundled sideload environment instead of a jailbreak-only
-absolute `/Library/Frameworks` path.
+Both the rootless deb and sideload variants compile with the rootless Mach-O
+scheme, but their final install names intentionally differ. The deb keeps the
+rootless `@rpath/YTABConfig.dylib` identity. Sideload artifacts use explicit
+`@executable_path` identities that must match where the injector copies the
+file.
+
+## Sideload packaging
+
+The recommended layout ZIP is ready to unpack into `YouTube.app/`:
+
+- `Frameworks/YTABConfig.dylib` identifies itself as
+  `@executable_path/Frameworks/YTABConfig.dylib`.
+- `YTABC.bundle` remains at the root of `YouTube.app/`.
+- Substrate loads through
+  `@rpath/CydiaSubstrate.framework/CydiaSubstrate`, which resolves through
+  YouTube's existing `@executable_path/Frameworks` rpath.
+
+The separate `_injector.dylib` is for tools that accept one dylib and always
+copy it to the root of `YouTube.app/`. Its identity is
+`@executable_path/YTABConfig.dylib`; copy `YTABC.bundle` separately.
+
+Do not combine an `@rpath/YTABConfig.dylib` load command with a
+root-level `YouTube.app/YTABConfig.dylib` unless the executable also has an
+`@executable_path` rpath. The audited YouTube 21.30.5 IPA had only
+`@executable_path/Frameworks`; because its YTABConfig load was weak, that
+mismatch silently skipped the tweak and left the app working without a
+YTABConfig settings menu.
 
 ## Catalog workflow
 

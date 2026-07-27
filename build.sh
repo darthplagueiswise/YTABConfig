@@ -13,6 +13,9 @@ TWEAK_DYLIB=".theos/obj/${APP_NAME}.dylib"
 BUNDLE_SOURCE="layout/Library/Application Support/YTABC.bundle"
 BUNDLE_NAME="YTABC.bundle"
 BUNDLE_OUTPUT="${PACKAGES_DIR}/${BUNDLE_NAME}"
+SIDELOAD_STAGE="${PACKAGES_DIR}/sideload"
+SIDELOAD_ROOT_ID="@executable_path/${APP_NAME}.dylib"
+SIDELOAD_FRAMEWORKS_ID="@executable_path/Frameworks/${APP_NAME}.dylib"
 
 log() {
 	printf '%s\n' "$*"
@@ -57,6 +60,24 @@ make_final() {
 	make FINALPACKAGE=1 "$@"
 }
 
+prepare_sideload_dylib() {
+	local source="$1"
+	local destination="$2"
+	local install_id="$3"
+
+	command -v install_name_tool >/dev/null 2>&1 ||
+		die "install_name_tool is required for sideload packaging."
+	command -v ldid >/dev/null 2>&1 ||
+		die "ldid is required for sideload packaging."
+
+	mkdir -p "$(dirname "$destination")"
+	cp "$source" "$destination"
+	install_name_tool -id "$install_id" "$destination"
+
+	# install_name_tool invalidates the existing ad-hoc signature.
+	ldid -S "$destination"
+}
+
 build_dylib() {
 	local option="${1:-}"
 	local dylib
@@ -73,17 +94,36 @@ build_dylib() {
 	dylib="$(resolve_tweak_dylib)"
 	[ -n "$dylib" ] && [ -f "$dylib" ] || die "${APP_NAME}.dylib was not produced."
 
-	rm -rf "${PACKAGES_DIR}/${APP_NAME}.dylib" "$BUNDLE_OUTPUT"
-	cp "$dylib" "${PACKAGES_DIR}/${APP_NAME}.dylib"
+	rm -rf \
+		"${PACKAGES_DIR}/${APP_NAME}.dylib" \
+		"${PACKAGES_DIR}/${APP_NAME}-injector.dylib" \
+		"$BUNDLE_OUTPUT" \
+		"$SIDELOAD_STAGE"
+
+	# Standalone injectors commonly copy a selected dylib to YouTube.app/.
+	prepare_sideload_dylib \
+		"$dylib" \
+		"${PACKAGES_DIR}/${APP_NAME}-injector.dylib" \
+		"$SIDELOAD_ROOT_ID"
+
+	# The layout ZIP is deterministic: unpack it into YouTube.app/. Its explicit
+	# install name matches the physical Frameworks/ location.
+	prepare_sideload_dylib \
+		"$dylib" \
+		"${SIDELOAD_STAGE}/Frameworks/${APP_NAME}.dylib" \
+		"$SIDELOAD_FRAMEWORKS_ID"
+
 	cp -R "$BUNDLE_SOURCE" "$BUNDLE_OUTPUT"
+	cp -R "$BUNDLE_SOURCE" "${SIDELOAD_STAGE}/${BUNDLE_NAME}"
 
 	rm -f "${PACKAGES_DIR}/${APP_NAME}-sideload.zip"
 	(
-		cd "$PACKAGES_DIR"
-		zip -qry "${APP_NAME}-sideload.zip" "${APP_NAME}.dylib" "$BUNDLE_NAME"
+		cd "$SIDELOAD_STAGE"
+		zip -qry "../${APP_NAME}-sideload.zip" Frameworks "$BUNDLE_NAME"
 	)
 
-	log "Dylib: ${PACKAGES_DIR}/${APP_NAME}.dylib"
+	log "Injector dylib: ${PACKAGES_DIR}/${APP_NAME}-injector.dylib"
+	log "Frameworks dylib: ${SIDELOAD_STAGE}/Frameworks/${APP_NAME}.dylib"
 	log "Bundle: ${BUNDLE_OUTPUT}"
 	log "Sideload bundle: ${PACKAGES_DIR}/${APP_NAME}-sideload.zip"
 }
@@ -121,7 +161,7 @@ build_rootless() {
 usage() {
 	echo "Usage: $0 <dylib|rootless> [--fast]"
 	echo
-	echo "  dylib          Build YTABConfig.dylib, YTABC.bundle, and a sideload ZIP"
+	echo "  dylib          Build injector dylib, Frameworks layout ZIP, and YTABC.bundle"
 	echo "  dylib --fast   Build the dylib without cleaning first"
 	echo "  rootless       Build a rootless deb"
 	exit 1

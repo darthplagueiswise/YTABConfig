@@ -19,6 +19,8 @@ require_text control "Maintainer: Afterglow Labs"
 require_text control "Homepage: https://github.com/afterglow-labs/YTABConfig"
 require_text Makefile "PACKAGE_VERSION = 2.0.0"
 require_text build.sh '	export THEOS_PACKAGE_SCHEME=rootless'
+require_text build.sh 'SIDELOAD_ROOT_ID="@executable_path/${APP_NAME}.dylib"'
+require_text build.sh 'SIDELOAD_FRAMEWORKS_ID="@executable_path/Frameworks/${APP_NAME}.dylib"'
 require_text README.md "# YTABConfig Feature Lab"
 require_text README.md "Original YTABConfig by PoomSmart."
 require_text README.md "[GNU General Public License v3.0](LICENSE)."
@@ -27,6 +29,21 @@ require_text "layout/Library/Application Support/YTABC.bundle/en.lproj/Localizab
 rootless_scheme_count="$(grep -Fc 'export THEOS_PACKAGE_SCHEME=rootless' build.sh)"
 if [[ "$rootless_scheme_count" -ne 2 ]]; then
     echo "both deb and standalone sideload builds must use the rootless Mach-O scheme" >&2
+    exit 1
+fi
+
+for sideload_contract in \
+    'install_name_tool -id "$install_id" "$destination"' \
+    '"${SIDELOAD_STAGE}/Frameworks/${APP_NAME}.dylib"' \
+    'zip -qry "../${APP_NAME}-sideload.zip" Frameworks "$BUNDLE_NAME"'; do
+    if ! grep -Fq "$sideload_contract" build.sh; then
+        echo "missing sideload layout contract '$sideload_contract' in build.sh" >&2
+        exit 1
+    fi
+done
+
+if grep -Fq 'zip -qry "${APP_NAME}-sideload.zip" "${APP_NAME}.dylib"' build.sh; then
+    echo "sideload ZIP must not place an @rpath dylib at the app root" >&2
     exit 1
 fi
 

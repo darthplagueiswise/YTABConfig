@@ -133,6 +133,14 @@ jobs:
           test -n "$DEB"
           cp "$DEB" "packages/YTABConfig_${VERSION}_rootless.deb"
           dpkg-deb -I "packages/YTABConfig_${VERSION}_rootless.deb"
+          STAGE="$(mktemp -d)"
+          dpkg-deb -x "packages/YTABConfig_${VERSION}_rootless.deb" "$STAGE"
+          ROOTLESS_DYLIB="$(find "$STAGE" -type f -name YTABConfig.dylib -print -quit)"
+          test -n "$ROOTLESS_DYLIB"
+          otool -D "$ROOTLESS_DYLIB" | grep -Fx '@rpath/YTABConfig.dylib'
+          otool -L "$ROOTLESS_DYLIB" |
+            grep -F '@rpath/CydiaSubstrate.framework/CydiaSubstrate'
+          rm -rf "$STAGE"
           ls -la packages
         env:
           THEOS: ${{ github.workspace }}/theos
@@ -144,19 +152,38 @@ jobs:
         run: |
           cd main
           ./build.sh dylib
-          mv packages/YTABConfig.dylib "packages/YTABConfig_v${VERSION}.dylib"
+          mv packages/YTABConfig-injector.dylib \
+            "packages/YTABConfig_v${VERSION}_injector.dylib"
           mv packages/YTABConfig-sideload.zip \
             "packages/YTABConfig_v${VERSION}_sideload.zip"
-          test "$(lipo -archs "packages/YTABConfig_v${VERSION}.dylib")" = "arm64"
-          otool -D "packages/YTABConfig_v${VERSION}.dylib" |
-            grep -Fx '@rpath/YTABConfig.dylib'
-          otool -L "packages/YTABConfig_v${VERSION}.dylib" |
+          INJECTOR_DYLIB="packages/YTABConfig_v${VERSION}_injector.dylib"
+          SIDELOAD_ZIP="packages/YTABConfig_v${VERSION}_sideload.zip"
+          test "$(lipo -archs "$INJECTOR_DYLIB")" = "arm64"
+          otool -D "$INJECTOR_DYLIB" |
+            grep -Fx '@executable_path/YTABConfig.dylib'
+          otool -L "$INJECTOR_DYLIB" |
             grep -F '@rpath/CydiaSubstrate.framework/CydiaSubstrate'
-          if otool -L "packages/YTABConfig_v${VERSION}.dylib" |
+          if otool -L "$INJECTOR_DYLIB" |
               grep -Fq '/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate'; then
             echo "::error::Sideload dylib still has an absolute jailbreak-only substrate path."
             exit 1
           fi
+
+          STAGE="$(mktemp -d)"
+          unzip -q "$SIDELOAD_ZIP" -d "$STAGE"
+          FRAMEWORKS_DYLIB="$STAGE/Frameworks/YTABConfig.dylib"
+          test -f "$FRAMEWORKS_DYLIB"
+          test -d "$STAGE/YTABC.bundle"
+          test "$(lipo -archs "$FRAMEWORKS_DYLIB")" = "arm64"
+          otool -D "$FRAMEWORKS_DYLIB" |
+            grep -Fx '@executable_path/Frameworks/YTABConfig.dylib'
+          otool -L "$FRAMEWORKS_DYLIB" |
+            grep -F '@rpath/CydiaSubstrate.framework/CydiaSubstrate'
+          if unzip -Z1 "$SIDELOAD_ZIP" | grep -Fxq 'YTABConfig.dylib'; then
+            echo "::error::Frameworks-layout ZIP must not place YTABConfig.dylib at app root."
+            exit 1
+          fi
+          rm -rf "$STAGE"
           ls -la packages
         env:
           THEOS: ${{ github.workspace }}/theos
@@ -175,6 +202,6 @@ jobs:
         with:
           name: YTABConfig_dylib_v${{ steps.version.outputs.version }}
           path: |
-            main/packages/YTABConfig_v${{ steps.version.outputs.version }}.dylib
+            main/packages/YTABConfig_v${{ steps.version.outputs.version }}_injector.dylib
             main/packages/YTABConfig_v${{ steps.version.outputs.version }}_sideload.zip
           if-no-files-found: error
