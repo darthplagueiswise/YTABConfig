@@ -111,7 +111,7 @@ jobs:
           bash Tests/app_catalog_export_static_check.sh
           bash scripts/package_metadata_static_check.sh
           bash scripts/polished_ui_static_check.sh
-          python -m unittest discover -s tests -t . -v
+          PYTHONPATH="$PWD" python -m unittest discover -s tests -t . -v
 
       - name: Read package version
         id: version
