@@ -67,6 +67,7 @@ build_dylib() {
 
 	ensure_packages_dir
 	log "Building ${APP_NAME}.dylib for Feather/manual sideload injection"
+	export THEOS_PACKAGE_SCHEME=rootless
 	make_final
 
 	dylib="$(resolve_tweak_dylib)"

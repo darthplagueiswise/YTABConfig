@@ -148,7 +148,15 @@ jobs:
           mv packages/YTABConfig-sideload.zip \
             "packages/YTABConfig_v${VERSION}_sideload.zip"
           test "$(lipo -archs "packages/YTABConfig_v${VERSION}.dylib")" = "arm64"
-          otool -L "packages/YTABConfig_v${VERSION}.dylib"
+          otool -D "packages/YTABConfig_v${VERSION}.dylib" |
+            grep -Fx '@rpath/YTABConfig.dylib'
+          otool -L "packages/YTABConfig_v${VERSION}.dylib" |
+            grep -F '@rpath/CydiaSubstrate.framework/CydiaSubstrate'
+          if otool -L "packages/YTABConfig_v${VERSION}.dylib" |
+              grep -Fq '/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate'; then
+            echo "::error::Sideload dylib still has an absolute jailbreak-only substrate path."
+            exit 1
+          fi
           ls -la packages
         env:
           THEOS: ${{ github.workspace }}/theos

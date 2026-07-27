@@ -39,6 +39,12 @@ three config classes are in the main executable (there is no
 platform-prefix exclusions, or 6,240 Raw Lab flags after them. These figures
 are diagnostic evidence only; they are never compiled into the runtime.
 
+Both the rootless deb and the standalone sideload ZIP use the rootless Mach-O
+scheme. The embedded dylib identifies itself as `@rpath/YTABConfig.dylib` and
+loads Substrate through `@rpath/CydiaSubstrate.framework/CydiaSubstrate`,
+matching an app-bundled sideload environment instead of a jailbreak-only
+absolute `/Library/Frameworks` path.
+
 ## Catalog workflow
 
 Raw Lab discovers the live flag list at runtime. The committed catalog contains
