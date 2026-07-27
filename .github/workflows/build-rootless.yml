@@ -122,8 +122,8 @@ jobs:
           "$RUNNER_TEMP/ytab-tests-venv/bin/python" -m pip install \
             --disable-pip-version-check jsonschema
           cd main
-          "$RUNNER_TEMP/ytab-tests-venv/bin/python" -m unittest \
-            discover -s tests -t . -v
+          PYTHONPATH="$PWD" "$RUNNER_TEMP/ytab-tests-venv/bin/python" -m unittest \
+            discover -s "$PWD/tests" -t "$PWD" -v
 
       - name: Get Version
         id: version
