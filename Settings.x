@@ -7,6 +7,7 @@
 #import <YouTubeHeader/YTSettingsViewController.h>
 #import <YouTubeHeader/YTUIUtils.h>
 #import <YouTubeHeader/YTVersionUtils.h>
+#import <pthread.h>
 #import "RuntimeFlagRegistry.h"
 #import "YTABCatalogProvider.h"
 #import "YTABLabUI.h"
@@ -25,6 +26,10 @@ static const NSInteger YTABCSection = 404;
 @end
 
 NSUserDefaults *defaults;
+extern NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *cache;
+NSSet<NSString *> *allKeysSet;
+BOOL allKeysNeedsUpdate = YES;
+pthread_mutex_t cacheMutex;
 
 BOOL tweakEnabled() {
     return [defaults boolForKey:EnabledKey];
@@ -46,6 +51,43 @@ NSBundle *YTABCBundle() {
 
 NSString *getKey(NSString *method, NSString *classKey) {
     return [NSString stringWithFormat:@"%@.%@.%@", Prefix, classKey, method];
+}
+
+BOOL getValue(NSString *methodKey) {
+    if (methodKey.length == 0) return NO;
+    pthread_mutex_lock(&cacheMutex);
+    BOOL hasOverride = [allKeysSet containsObject:methodKey];
+    BOOL value = NO;
+    if (hasOverride) {
+        value = [defaults boolForKey:methodKey];
+    } else {
+        NSString *prefix = [Prefix stringByAppendingString:@"."];
+        if ([methodKey hasPrefix:prefix]) {
+            NSString *runtimeKey = [methodKey substringFromIndex:prefix.length];
+            NSRange separator = [runtimeKey rangeOfString:@"."];
+            if (separator.location != NSNotFound &&
+                separator.location > 0 &&
+                separator.location + 1 < runtimeKey.length) {
+                NSString *classKey =
+                    [runtimeKey substringToIndex:separator.location];
+                NSString *selector =
+                    [runtimeKey substringFromIndex:separator.location + 1];
+                value = [cache[classKey][selector] boolValue];
+            }
+        }
+    }
+    pthread_mutex_unlock(&cacheMutex);
+    return value;
+}
+
+void updateAllKeys(void) {
+    pthread_mutex_lock(&cacheMutex);
+    if (allKeysNeedsUpdate) {
+        allKeysSet =
+            [NSSet setWithArray:defaults.dictionaryRepresentation.allKeys];
+        allKeysNeedsUpdate = NO;
+    }
+    pthread_mutex_unlock(&cacheMutex);
 }
 
 static BOOL YTABCParseRuntimeKey(NSString *runtimeKey, NSString **classKey, NSString **selector) {
@@ -328,6 +370,14 @@ void SearchHook() {
 %ctor {
     defaults = [NSUserDefaults standardUserDefaults];
     [defaults registerDefaults:@{EnabledKey: @YES}];
+
+    pthread_mutexattr_t attributes;
+    pthread_mutexattr_init(&attributes);
+    pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&cacheMutex, &attributes);
+    pthread_mutexattr_destroy(&attributes);
+
+    YTABCRuntimeRegistryStart(defaults);
 
     %init;
 }

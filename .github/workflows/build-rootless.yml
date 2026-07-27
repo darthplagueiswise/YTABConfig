@@ -1,4 +1,4 @@
-name: Build YTABConfig (rootless and dylib)
+name: Build YTABConfig (rootless, dylib, and Feather)
 
 on:
   workflow_dispatch:
@@ -10,6 +10,11 @@ on:
         type: boolean
       build_dylib:
         description: Build standalone YTABConfig.dylib and sideload bundle
+        default: true
+        required: false
+        type: boolean
+      build_feather:
+        description: Build Feather-compatible deb
         default: true
         required: false
         type: boolean
@@ -40,12 +45,15 @@ jobs:
       SDK_NAME: iPhoneOS26.2.sdk
       BUILD_ROOTLESS: ${{ github.event_name != 'workflow_dispatch' || inputs.build_rootless }}
       BUILD_DYLIB: ${{ github.event_name != 'workflow_dispatch' || inputs.build_dylib }}
+      BUILD_FEATHER: ${{ github.event_name != 'workflow_dispatch' || inputs.build_feather }}
       UPLOAD_ARTIFACTS: ${{ github.event_name != 'workflow_dispatch' || inputs.upload_artifacts }}
 
     steps:
       - name: Validate selection
         run: |
-          if [ "$BUILD_ROOTLESS" != "true" ] && [ "$BUILD_DYLIB" != "true" ]; then
+          if [ "$BUILD_ROOTLESS" != "true" ] &&
+              [ "$BUILD_DYLIB" != "true" ] &&
+              [ "$BUILD_FEATHER" != "true" ]; then
             echo "::error::Select at least one build variant."
             exit 1
           fi
@@ -197,6 +205,36 @@ jobs:
         env:
           THEOS: ${{ github.workspace }}/theos
 
+      - name: Build Feather-compatible deb
+        if: env.BUILD_FEATHER == 'true'
+        run: |
+          cd main
+          ./build.sh feather
+          FEATHER_DEB="packages/YTABConfig_${VERSION}_feather.deb"
+          test -f "$FEATHER_DEB"
+          ar t "$FEATHER_DEB" | grep -Fx 'data.tar.xz'
+          STAGE="$(mktemp -d)"
+          dpkg-deb -x "$FEATHER_DEB" "$STAGE"
+          FEATHER_DYLIB="$STAGE/var/jb/Library/MobileSubstrate/DynamicLibraries/YTABConfig.dylib"
+          test -f "$FEATHER_DYLIB"
+          test -d "$STAGE/var/jb/Library/Application Support/YTABC.bundle"
+          test "$(lipo -archs "$FEATHER_DYLIB")" = "arm64"
+          otool -D "$FEATHER_DYLIB" |
+            grep -Fx '@executable_path/Frameworks/YTABConfig.dylib'
+          otool -L "$FEATHER_DYLIB" |
+            grep -F '@rpath/CydiaSubstrate.framework/CydiaSubstrate'
+          if otool -L "$FEATHER_DYLIB" |
+              grep -Fq '/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate'; then
+            echo "::error::Feather dylib still has an absolute jailbreak-only substrate path."
+            exit 1
+          fi
+          rm -rf "$STAGE"
+          ls -la packages
+        env:
+          THEOS: ${{ github.workspace }}/theos
+          THEOS_PLATFORM_DEB_COMPRESSION_TYPE: lzma
+          THEOS_PLATFORM_DEB_COMPRESSION_LEVEL: 9
+
       - name: Upload rootless deb
         if: env.UPLOAD_ARTIFACTS == 'true' && env.BUILD_ROOTLESS == 'true'
         uses: actions/upload-artifact@v4
@@ -213,4 +251,12 @@ jobs:
           path: |
             main/packages/YTABConfig_v${{ steps.version.outputs.version }}_injector.dylib
             main/packages/YTABConfig_v${{ steps.version.outputs.version }}_sideload.zip
+          if-no-files-found: error
+
+      - name: Upload Feather-compatible deb
+        if: env.UPLOAD_ARTIFACTS == 'true' && env.BUILD_FEATHER == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: YTABConfig_${{ steps.version.outputs.version }}_feather
+          path: main/packages/YTABConfig_${{ steps.version.outputs.version }}_feather.deb
           if-no-files-found: error

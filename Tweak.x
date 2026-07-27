@@ -2,72 +2,129 @@
 #import <YouTubeHeader/YTGlobalConfig.h>
 #import <YouTubeHeader/YTColdConfig.h>
 #import <YouTubeHeader/YTHotConfig.h>
+#import <substrate.h>
+#import <pthread.h>
 
 #import "RuntimeFlagRegistry.h"
+
+extern pthread_mutex_t cacheMutex;
+
+NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *cache;
 
 extern void SearchHook(void);
 extern BOOL tweakEnabled(void);
 extern BOOL groupedSettings(void);
+extern void updateAllKeys(void);
+extern NSString *getKey(NSString *method, NSString *classKey);
+extern BOOL getValue(NSString *methodKey);
 
-typedef struct {
-    NSUInteger availableConfigCount;
-} YTABCRegistrationResult;
-
-static id YTABCSafeValueForKey(id object, NSString *key, NSString *context) {
-    if (!object || key.length == 0) return nil;
-    @try {
-        return [object valueForKey:key];
-    } @catch (NSException *exception) {
-        NSLog(@"[YTABConfig Runtime] KVC drift reading %@ from %@ during %@: %@",
-              key, NSStringFromClass([object class]), context, exception.reason);
-        return nil;
-    }
+static BOOL returnFunction(id const self, SEL selector) {
+    NSString *method = NSStringFromSelector(selector);
+    NSString *methodKey = getKey(method, NSStringFromClass([self class]));
+    return getValue(methodKey);
 }
 
-static YTABCRegistrationResult YTABCRegisterAvailableConfigs(
-    YTAppDelegate *delegate,
-    NSString *context
-) {
-    NSArray<NSString *> *keys = @[@"_globalConfig", @"_coldConfig", @"_hotConfig"];
-    NSMutableArray *instances = [NSMutableArray arrayWithCapacity:keys.count];
-    id settings = nil;
-    BOOL attemptedSettingsFallback = NO;
-    for (NSString *key in keys) {
-        id instance = YTABCSafeValueForKey(delegate, key, context);
-        if (!instance) {
-            if (!attemptedSettingsFallback) {
-                settings = YTABCSafeValueForKey(delegate, @"_settings", context);
-                attemptedSettingsFallback = YES;
+static BOOL getValueFromInvocation(id target, SEL selector) {
+    IMP implementation = [target methodForSelector:selector];
+    return ((BOOL (*)(id, SEL))implementation)(target, selector);
+}
+
+static NSSet<NSString *> *excludedPrefixes;
+
+static NSMutableArray<NSString *> *getBooleanMethods(Class targetClass) {
+    NSMutableArray<NSString *> *allMethods = [NSMutableArray array];
+    unsigned int methodCount = 0;
+    Method *methods = class_copyMethodList(targetClass, &methodCount);
+    for (unsigned int index = 0; index < methodCount; ++index) {
+        Method method = methods[index];
+        const char *encoding = method_getTypeEncoding(method);
+        if (!encoding || strcmp(encoding, "B16@0:8") != 0) continue;
+
+        NSString *selector = NSStringFromSelector(method_getName(method));
+        BOOL excluded = NO;
+        for (NSString *prefix in excludedPrefixes) {
+            if ([selector hasPrefix:prefix]) {
+                excluded = YES;
+                break;
             }
-            instance = YTABCSafeValueForKey(settings, key, context);
         }
-        if (instance) [instances addObject:instance];
+        if (!excluded && [selector rangeOfString:@"Android"].location != NSNotFound) {
+            excluded = YES;
+        }
+        if (excluded) continue;
+
+        if (![allMethods containsObject:selector]) [allMethods addObject:selector];
+    }
+    free(methods);
+    return allMethods;
+}
+
+static void hookClass(NSObject *instance) {
+    if (!instance) {
+        [NSException raise:@"hookClass Invalid argument exception"
+                    format:@"Hooking the class of a non-existing instance"];
     }
 
-    NSUInteger availableConfigCount = 0;
-    for (id instance in instances) {
-        if (YTABCRuntimeRegisterConfigInstance(instance)) availableConfigCount++;
-    }
-    YTABCRuntimeApplyPersistedOverrides();
+    Class instanceClass = [instance class];
+    NSMutableArray<NSString *> *methods = getBooleanMethods(instanceClass);
+    NSString *classKey = NSStringFromClass(instanceClass);
+    YTABCRuntimeRegisterConfigInstance(instance);
 
-    NSLog(@"[YTABConfig Runtime] %@ registered %lu/3 live config instances without sampling getters",
-          context, (unsigned long)availableConfigCount);
-    YTABCRegistrationResult result = { availableConfigCount };
-    return result;
+    pthread_mutex_lock(&cacheMutex);
+    NSMutableDictionary<NSString *, NSNumber *> *classCache =
+        cache[classKey] = [NSMutableDictionary dictionaryWithCapacity:methods.count];
+    for (NSString *method in methods) {
+        SEL selector = NSSelectorFromString(method);
+        BOOL nativeValue = getValueFromInvocation(instance, selector);
+        classCache[method] = @(nativeValue);
+
+        IMP originalImplementation = NULL;
+        MSHookMessageEx(
+            instanceClass,
+            selector,
+            (IMP)returnFunction,
+            &originalImplementation
+        );
+        YTABCRuntimeRegisterOriginalImplementation(
+            instance,
+            selector,
+            originalImplementation,
+            nativeValue
+        );
+    }
+    pthread_mutex_unlock(&cacheMutex);
 }
 
 %hook YTAppDelegate
 
 - (BOOL)application:(id)application didFinishLaunchingWithOptions:(id)options {
     if (tweakEnabled()) {
-        YTABCRuntimeRegistryStart(NSUserDefaults.standardUserDefaults);
-        YTABCRegistrationResult registration =
-            YTABCRegisterAvailableConfigs(self, @"pre-original");
-        if (registration.availableConfigCount < 3) {
-            NSLog(@"[YTABConfig Runtime] Launch registration incomplete: %lu/3 live configs. "
-                  "Continuing YouTube startup without a retry.",
-                  (unsigned long)registration.availableConfigCount);
+        updateAllKeys();
+        YTGlobalConfig *globalConfig = nil;
+        YTColdConfig *coldConfig = nil;
+        YTHotConfig *hotConfig = nil;
+        @try {
+            globalConfig = [self valueForKey:@"_globalConfig"];
+            coldConfig = [self valueForKey:@"_coldConfig"];
+            hotConfig = [self valueForKey:@"_hotConfig"];
+        } @catch (NSException *exception) {
+            @try {
+                id settings = [self valueForKey:@"_settings"];
+                globalConfig = [settings valueForKey:@"_globalConfig"];
+                coldConfig = [settings valueForKey:@"_coldConfig"];
+                hotConfig = [settings valueForKey:@"_hotConfig"];
+            } @catch (NSException *fallbackException) {
+                NSLog(@"[YTABConfig Runtime] Config KVC lookup failed: %@ / %@",
+                      exception.reason, fallbackException.reason);
+            }
         }
+
+        // Preserve PoomSmart 1.9.2's proven launch contract: capture each live
+        // getter before replacing it, then install the same cache-backed hook.
+        hookClass(globalConfig);
+        hookClass(coldConfig);
+        hookClass(hotConfig);
+
         if (!groupedSettings()) SearchHook();
     }
     return %orig;
@@ -81,5 +138,15 @@ static YTABCRegistrationResult YTABCRegisterAvailableConfigs(
     if ([NSFileManager.defaultManager fileExistsAtPath:modulePath]) {
         [[NSBundle bundleWithPath:modulePath] load];
     }
+
+    cache = [NSMutableDictionary new];
+    excludedPrefixes = [NSSet setWithArray:@[
+        @"android", @"amsterdam", @"kidsClient", @"musicClient",
+        @"musicOfflineClient", @"unplugged"
+    ]];
     %init;
+}
+
+%dtor {
+    [cache removeAllObjects];
 }

@@ -11,6 +11,16 @@ FOUNDATION_EXPORT void YTABCRuntimeRegistryStart(NSUserDefaults *defaults);
 /// Returns YES only for a supported YTGlobalConfig/YTColdConfig/YTHotConfig hierarchy.
 FOUNDATION_EXPORT BOOL YTABCRuntimeRegisterConfigInstance(id instance);
 
+/// Captures the original IMP returned by the PoomSmart-compatible launch hook.
+/// This allows Feature Lab to sample live native values without installing a
+/// second hook or replacing the proven cache-backed launch path.
+FOUNDATION_EXPORT void YTABCRuntimeRegisterOriginalImplementation(
+    id instance,
+    SEL selector,
+    IMP originalImplementation,
+    BOOL nativeValue
+);
+
 /// Applies only valid persisted overrides whose selectors still exist in the registered runtime.
 /// This path is intentionally proportional to the number of saved overrides, not all live flags.
 FOUNDATION_EXPORT void YTABCRuntimeApplyPersistedOverrides(void);

@@ -21,22 +21,42 @@ reject_text() {
     fi
 }
 
-require_text RuntimeFlagRegistry.m "YTABCCanonicalConfigOwnerClass"
-require_text RuntimeFlagRegistry.m "YTABCRecordConflictsWithOwnerHierarchy"
-require_text RuntimeFlagRegistry.m "YTABCRecordsBySelector[selectorName]"
+# Preserve the launch path proven by PoomSmart 1.9.2: enumerate exact BOOL
+# getters, capture each native value, cache it, and install one cache-backed
+# hook before the original app delegate implementation.
+require_text Tweak.x "static NSMutableArray<NSString *> *getBooleanMethods"
+require_text Tweak.x 'strcmp(encoding, "B16@0:8") != 0'
+require_text Tweak.x "static void hookClass(NSObject *instance)"
+require_text Tweak.x "BOOL nativeValue = getValueFromInvocation(instance, selector);"
+require_text Tweak.x "classCache[method] = @(nativeValue);"
+require_text Tweak.x "MSHookMessageEx("
+require_text Tweak.x "YTABCRuntimeRegisterOriginalImplementation("
+require_text Tweak.x "hookClass(globalConfig);"
+require_text Tweak.x "hookClass(coldConfig);"
+require_text Tweak.x "hookClass(hotConfig);"
+require_text Tweak.x "if (!groupedSettings()) SearchHook();"
+require_text Tweak.x "return %orig;"
+reject_text Tweak.x "dispatch_async(dispatch_get_main_queue()"
+reject_text Tweak.x "post-original"
+reject_text Tweak.x "bounded-retry"
+reject_text Tweak.x "YTABCRuntimeDiscoverFlags"
+
+# Feature Lab is a bridge over that one hook/cache. It must never install a
+# second hook set or observe defaults globally during YouTube startup.
+require_text RuntimeFlagRegistry.h "YTABCRuntimeRegisterOriginalImplementation"
+require_text RuntimeFlagRegistry.h "YTABCRuntimeValuesSnapshot"
+require_text RuntimeFlagRegistry.h "YTABCRuntimeRefreshAllNativeValues"
+require_text RuntimeFlagRegistry.m "YTABCRuntimeOriginalImplementations"
 require_text RuntimeFlagRegistry.m "YTABCRuntimeDiscoverFlags"
 require_text RuntimeFlagRegistry.m "YTABCRuntimeApplyPersistedOverrides"
 require_text RuntimeFlagRegistry.m "YTABCNativeRefreshBatchSize"
-require_text RuntimeFlagRegistry.m "YTABCDefaultsSnapshot"
-reject_text RuntimeFlagRegistry.m "YTABCDefaultsObserver"
+require_text RuntimeFlagRegistry.m "originalImplementation"
+require_text RuntimeFlagRegistry.m "nativeCapturedAt"
+reject_text RuntimeFlagRegistry.m "MSHookMessageEx"
+reject_text RuntimeFlagRegistry.m "class_copyMethodList"
 reject_text RuntimeFlagRegistry.m "NSUserDefaultsDidChangeNotification"
 reject_text RuntimeFlagRegistry.m "addObserverForName:"
 reject_text RuntimeFlagRegistry.m "removeObserver:"
-require_text RuntimeFlagRegistry.h "FOUNDATION_EXPORT BOOL YTABCRuntimeRegisterConfigInstance"
-require_text RuntimeFlagRegistry.h "YTABCRuntimeValuesSnapshot"
-require_text RuntimeFlagRegistry.h "YTABCRuntimeRefreshAllNativeValues"
-require_text RuntimeFlagRegistry.m "nativeCapturedAt"
-require_text RuntimeFlagRegistry.m "hasNativeValue"
 
 require_text Settings.x '#import "RuntimeFlagRegistry.h"'
 require_text Settings.x "YTABCRuntimeDiscoverFlags"
@@ -48,62 +68,19 @@ require_text Settings.x "YTABCValidOverrideNumber"
 require_text Settings.x "NSDictionary *representation = [defaults dictionaryRepresentation]"
 require_text Settings.x "[defaults objectForKey:fullKey]"
 require_text Settings.x '[defaults registerDefaults:@{EnabledKey: @YES}]'
+require_text Settings.x "YTABCRuntimeRegistryStart(defaults);"
 require_text Settings.x "dispatch_once(&searchHookOnceToken"
+require_text Settings.x "pthread_mutex_t cacheMutex;"
+require_text Settings.x "BOOL allKeysNeedsUpdate = YES;"
+require_text Settings.x "BOOL getValue(NSString *methodKey)"
+require_text Settings.x "void updateAllKeys(void)"
+require_text Settings.x "pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_RECURSIVE);"
 reject_text Settings.x "[defaults setBool:YES forKey:EnabledKey]"
-reject_text Settings.x "[cache setValue:@(value)"
-reject_text Settings.x "cache[sourceClass][selector] = @(nativeValue)"
-reject_text Settings.x "cache[classKey][selector] = value"
 reject_text Settings.x "if (NO && tweakEnabled())"
 reject_text Settings.x "importRegex"
 reject_text Settings.x "categoryCache"
 reject_text Settings.x "titleSortDescriptor"
 reject_text Settings.x "UIApplicationDidReceiveMemoryWarningNotification"
-
-require_text Tweak.x "YTABCRegisterAvailableConfigs"
-require_text Tweak.x "YTABCRegistrationResult registration ="
-require_text Tweak.x "registration.availableConfigCount < 3"
-require_text Tweak.x "without sampling getters"
-require_text Tweak.x "pre-original"
-require_text Tweak.x "Continuing YouTube startup without a retry."
-require_text Tweak.x "return %orig;"
-reject_text Tweak.x "post-original"
-reject_text Tweak.x "bounded-retry"
-reject_text Tweak.x "YTABCScheduleBoundedRegistrationRetry"
-reject_text Tweak.x "dispatch_async(dispatch_get_main_queue()"
-reject_text Tweak.x "BOOL result = %orig;"
-reject_text Tweak.x "discoveredFlagCount"
-reject_text Tweak.x "YouTube 21.28.3"
-reject_text Tweak.x "YTABCRuntimeDiscoverFlags"
-
-conflict_body="$(sed -n '/^static BOOL YTABCRecordConflictsWithOwnerHierarchy/,/^}/p' RuntimeFlagRegistry.m)"
-if grep -Fq "YTABCRecords.allValues" <<<"$conflict_body"; then
-    echo "hierarchy conflict lookup must not scan every registered flag" >&2
-    exit 1
-fi
-
-registration_count="$(grep -Fc 'YTABCRegisterAvailableConfigs(self,' Tweak.x)"
-if [[ "$registration_count" -ne 1 ]]; then
-    echo "expected one fail-open pre-original registration, found $registration_count call sites" >&2
-    exit 1
-fi
-
-register_body="$(sed -n '/^BOOL YTABCRuntimeRegisterConfigInstance/,/^}/p' RuntimeFlagRegistry.m)"
-if grep -Fq "YTABCInvokeBOOL" <<<"$register_body"; then
-    echo "launch-time config registration must not invoke native getters" >&2
-    exit 1
-fi
-
-discover_body="$(sed -n '/^NSUInteger YTABCRuntimeDiscoverFlags/,/^}/p' RuntimeFlagRegistry.m)"
-if grep -Fq "YTABCInvokeBOOL" <<<"$discover_body"; then
-    echo "live flag discovery must enumerate metadata without invoking getters" >&2
-    exit 1
-fi
-
-hook_body="$(sed -n '/^static BOOL YTABCRuntimeHook/,/^}/p' RuntimeFlagRegistry.m)"
-if grep -Fq "objectForKey" <<<"$hook_body"; then
-    echo "hot getter hooks must use reconciled in-memory override state" >&2
-    exit 1
-fi
 
 orig_count="$(grep -Ec '(^|[^[:alnum:]_])%orig([^[:alnum:]_]|$)' Tweak.x)"
 if [[ "$orig_count" -ne 1 ]]; then
@@ -111,12 +88,31 @@ if [[ "$orig_count" -ne 1 ]]; then
     exit 1
 fi
 
-registration_line="$(grep -nF 'YTABCRegisterAvailableConfigs(self, @"pre-original")' Tweak.x | cut -d: -f1)"
-search_hook_line="$(grep -nF 'if (!groupedSettings()) SearchHook();' Tweak.x | cut -d: -f1)"
+hook_count="$(grep -Fc 'MSHookMessageEx(' Tweak.x)"
+if [[ "$hook_count" -ne 1 ]]; then
+    echo "expected one PoomSmart-compatible hook call site, found $hook_count" >&2
+    exit 1
+fi
+
+native_line="$(grep -nF 'BOOL nativeValue = getValueFromInvocation(instance, selector);' Tweak.x | cut -d: -f1)"
+cache_line="$(grep -nF 'classCache[method] = @(nativeValue);' Tweak.x | cut -d: -f1)"
+hook_line="$(grep -nF 'MSHookMessageEx(' Tweak.x | cut -d: -f1)"
+capture_line="$(grep -nF 'YTABCRuntimeRegisterOriginalImplementation(' Tweak.x | cut -d: -f1)"
+if [[ -z "$native_line" || -z "$cache_line" || -z "$hook_line" || -z "$capture_line" ||
+      "$native_line" -ge "$cache_line" || "$cache_line" -ge "$hook_line" ||
+      "$hook_line" -ge "$capture_line" ]]; then
+    echo "native capture, cache, hook, and bridge registration order drifted" >&2
+    exit 1
+fi
+
+global_line="$(grep -nF 'hookClass(globalConfig);' Tweak.x | cut -d: -f1)"
+hot_line="$(grep -nF 'hookClass(hotConfig);' Tweak.x | cut -d: -f1)"
+search_line="$(grep -nF 'if (!groupedSettings()) SearchHook();' Tweak.x | cut -d: -f1)"
 orig_line="$(grep -nF 'return %orig;' Tweak.x | cut -d: -f1)"
-if [[ -z "$registration_line" || -z "$search_hook_line" || -z "$orig_line" ||
-      "$registration_line" -ge "$search_hook_line" || "$search_hook_line" -ge "$orig_line" ]]; then
-    echo "launch preparation must finish before the final %orig call" >&2
+if [[ -z "$global_line" || -z "$hot_line" || -z "$search_line" || -z "$orig_line" ||
+      "$global_line" -ge "$hot_line" || "$hot_line" -ge "$search_line" ||
+      "$search_line" -ge "$orig_line" ]]; then
+    echo "PoomSmart-compatible launch ordering drifted" >&2
     exit 1
 fi
 
