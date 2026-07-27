@@ -5,8 +5,6 @@
 #import <substrate.h>
 #import <pthread.h>
 
-#import "RuntimeFlagRegistry.h"
-
 extern pthread_mutex_t cacheMutex;
 
 NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *cache;
@@ -68,29 +66,15 @@ static void hookClass(NSObject *instance) {
     Class instanceClass = [instance class];
     NSMutableArray<NSString *> *methods = getBooleanMethods(instanceClass);
     NSString *classKey = NSStringFromClass(instanceClass);
-    YTABCRuntimeRegisterConfigInstance(instance);
 
     pthread_mutex_lock(&cacheMutex);
     NSMutableDictionary<NSString *, NSNumber *> *classCache =
-        cache[classKey] = [NSMutableDictionary dictionaryWithCapacity:methods.count];
+        cache[classKey] = [NSMutableDictionary new];
     for (NSString *method in methods) {
         SEL selector = NSSelectorFromString(method);
         BOOL nativeValue = getValueFromInvocation(instance, selector);
         classCache[method] = @(nativeValue);
-
-        IMP originalImplementation = NULL;
-        MSHookMessageEx(
-            instanceClass,
-            selector,
-            (IMP)returnFunction,
-            &originalImplementation
-        );
-        YTABCRuntimeRegisterOriginalImplementation(
-            instance,
-            selector,
-            originalImplementation,
-            nativeValue
-        );
+        MSHookMessageEx(instanceClass, selector, (IMP)returnFunction, NULL);
     }
     pthread_mutex_unlock(&cacheMutex);
 }

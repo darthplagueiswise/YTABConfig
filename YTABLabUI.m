@@ -394,38 +394,36 @@ static NSString *YTABReadableTitle(NSString *selector) {
 
 - (void)writeJSONExportWithCompletion:(YTABLabJSONExportCompletion)completion {
     if (!completion) return;
-    YTABCRuntimeRefreshAllNativeValues(^{
-        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-            @autoreleasepool {
-                NSString *exportedAt = YTABExportTimestamp();
-                NSDictionary *runtimeSnapshot = YTABCRuntimeSnapshot() ?: @{};
-                NSDictionary *preferenceOverrides = YTABCopyOverrideValues() ?: @{};
-                NSDictionary *document = [self
-                    runtimeExportDocumentWithRuntimeSnapshot:runtimeSnapshot
-                    preferenceOverrides:preferenceOverrides
-                    exportedAt:exportedAt];
-                NSError *error = nil;
-                NSData *data = nil;
-                if ([NSJSONSerialization isValidJSONObject:document]) {
-                    data = [NSJSONSerialization dataWithJSONObject:document
-                                                           options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys
-                                                             error:&error];
-                } else {
-                    error = YTABExportError(1, @"Runtime state contains a value that cannot be encoded as JSON.");
-                }
-
-                NSURL *fileURL = nil;
-                if (data && !error) {
-                    NSString *filename = [NSString stringWithFormat:@"YTABConfig-runtime-%@.json", NSUUID.UUID.UUIDString];
-                    fileURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:filename]];
-                    if (![data writeToURL:fileURL options:NSDataWritingAtomic error:&error]) fileURL = nil;
-                }
-                if (!fileURL && !error) error = YTABExportError(2, @"The runtime JSON file could not be written.");
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    completion(fileURL, error);
-                });
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        @autoreleasepool {
+            NSString *exportedAt = YTABExportTimestamp();
+            NSDictionary *runtimeSnapshot = YTABCRuntimeSnapshot() ?: @{};
+            NSDictionary *preferenceOverrides = YTABCopyOverrideValues() ?: @{};
+            NSDictionary *document = [self
+                runtimeExportDocumentWithRuntimeSnapshot:runtimeSnapshot
+                preferenceOverrides:preferenceOverrides
+                exportedAt:exportedAt];
+            NSError *error = nil;
+            NSData *data = nil;
+            if ([NSJSONSerialization isValidJSONObject:document]) {
+                data = [NSJSONSerialization dataWithJSONObject:document
+                                                       options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys
+                                                         error:&error];
+            } else {
+                error = YTABExportError(1, @"Runtime state contains a value that cannot be encoded as JSON.");
             }
-        });
+
+            NSURL *fileURL = nil;
+            if (data && !error) {
+                NSString *filename = [NSString stringWithFormat:@"YTABConfig-runtime-%@.json", NSUUID.UUID.UUIDString];
+                fileURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:filename]];
+                if (![data writeToURL:fileURL options:NSDataWritingAtomic error:&error]) fileURL = nil;
+            }
+            if (!fileURL && !error) error = YTABExportError(2, @"The runtime JSON file could not be written.");
+            dispatch_async(dispatch_get_main_queue(), ^{
+                completion(fileURL, error);
+            });
+        }
     });
 }
 
@@ -970,13 +968,8 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
     } else if (indexPath.row == 0) {
         [self shareJSONExport];
     } else if (indexPath.row == 1) {
-        __weak typeof(self) weakSelf = self;
-        YTABCRuntimeRefreshAllNativeValues(^{
-            __strong typeof(weakSelf) strongSelf = weakSelf;
-            if (!strongSelf) return;
-            [UIPasteboard generalPasteboard].string = [strongSelf.provider exportText];
-            [strongSelf showMessage:@"Legacy text export copied to the clipboard."];
-        });
+        [UIPasteboard generalPasteboard].string = [self.provider exportText];
+        [self showMessage:@"Legacy text export copied to the clipboard."];
     } else if (indexPath.row == 2) {
         NSUInteger count = [self.provider importText:[UIPasteboard generalPasteboard].string ?: @""];
         self.flags = [self.provider allFlags];

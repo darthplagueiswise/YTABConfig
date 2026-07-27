@@ -26,16 +26,16 @@ being presented as a promise.
 
 Launch behavior deliberately stays compatible with PoomSmart 1.9.2: the tweak
 enumerates the current `YTGlobalConfig`, `YTColdConfig`, and `YTHotConfig`
-instances, captures each native BOOL getter, and installs one cache-backed hook
-per supported selector before YouTube's original app-delegate implementation.
-This preserves existing `YTABC` overrides and the path already proven in
-sideloaded YouTube.
+instances, invokes each supported native BOOL getter once, stores that value in
+the shared cache, and calls `MSHookMessageEx(..., NULL)` before YouTube's
+original app-delegate implementation. It does not retain original IMPs or
+install a parallel registry. The master switch remains default-off, matching
+PoomSmart; an existing `EnabledYTABC` preference is preserved.
 
 Feature Lab is a query layer over that same live cache and hook set. It never
 installs a second registry of hooks. Opening Raw Lab reads the current selector
-set from the running app, and visible rows can sample the original IMP captured
-before the hook. A full report samples those original implementations on the
-main queue in bounded batches so the app can continue servicing its run loop.
+set from the running app. Visible rows and reports read the native value captured
+immediately before the hook; they never call the original getter again.
 
 The YouTube 21.30.5 arm64 binary was audited as a compatibility fixture. The
 three config classes are in the main executable (there is no
@@ -95,7 +95,9 @@ is `YouTube.app/Frameworks/YTABConfig.dylib` with
 Raw Lab discovers the live flag list at runtime. The committed catalog contains
 only reviewed metadata; full decompile catalogs are generated on demand and are
 not shipped in the tweak. A catalog is loaded only when its `youtubeVersion`
-matches the installed app. The embedded reviewed seed now targets 21.30.5.
+matches the installed app. The embedded reviewed seed now targets 21.30.5 and
+is opened only after the user selects **Open Feature Lab**; it is not read while
+YouTube launches.
 
 ```bash
 python3 tools/catalog_extractor.py "/path/to/YouTube (YT)" \

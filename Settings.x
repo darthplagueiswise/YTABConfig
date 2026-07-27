@@ -20,6 +20,8 @@
 #define LOC(x) _LOC(tweakBundle, x)
 
 static const NSInteger YTABCSection = 404;
+static NSString * const KeyFormatString = @"%@.%@";
+static NSString * const FullKeyFormatString = @"%@.%@.%@";
 
 @interface YTSettingsSectionItemManager (YTABConfig)
 - (void)updateYTABCSectionWithEntry:(id)entry;
@@ -30,6 +32,8 @@ extern NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber 
 NSSet<NSString *> *allKeysSet;
 BOOL allKeysNeedsUpdate = YES;
 pthread_mutex_t cacheMutex;
+NSMutableDictionary<NSString *, NSString *> *keyCache;
+NSUInteger prefixLength;
 
 BOOL tweakEnabled() {
     return [defaults boolForKey:EnabledKey];
@@ -50,34 +54,34 @@ NSBundle *YTABCBundle() {
 }
 
 NSString *getKey(NSString *method, NSString *classKey) {
-    return [NSString stringWithFormat:@"%@.%@.%@", Prefix, classKey, method];
+    NSString *cacheKey =
+        [NSString stringWithFormat:KeyFormatString, classKey, method];
+    pthread_mutex_lock(&cacheMutex);
+    NSString *fullKey = keyCache[cacheKey];
+    if (!fullKey) {
+        fullKey = [NSString stringWithFormat:FullKeyFormatString,
+                   Prefix, classKey, method];
+        keyCache[cacheKey] = fullKey;
+    }
+    pthread_mutex_unlock(&cacheMutex);
+    return fullKey;
 }
 
 BOOL getValue(NSString *methodKey) {
-    if (methodKey.length == 0) return NO;
+    if (!methodKey) return NO;
     pthread_mutex_lock(&cacheMutex);
-    BOOL hasOverride = [allKeysSet containsObject:methodKey];
-    BOOL value = NO;
-    if (hasOverride) {
-        value = [defaults boolForKey:methodKey];
+    BOOL contains = [allKeysSet containsObject:methodKey];
+    BOOL result = NO;
+    if (!contains) {
+        NSString *keyPath =
+            [methodKey substringFromIndex:prefixLength + 1];
+        id value = [cache valueForKeyPath:keyPath];
+        result = value ? [value boolValue] : NO;
     } else {
-        NSString *prefix = [Prefix stringByAppendingString:@"."];
-        if ([methodKey hasPrefix:prefix]) {
-            NSString *runtimeKey = [methodKey substringFromIndex:prefix.length];
-            NSRange separator = [runtimeKey rangeOfString:@"."];
-            if (separator.location != NSNotFound &&
-                separator.location > 0 &&
-                separator.location + 1 < runtimeKey.length) {
-                NSString *classKey =
-                    [runtimeKey substringToIndex:separator.location];
-                NSString *selector =
-                    [runtimeKey substringFromIndex:separator.location + 1];
-                value = [cache[classKey][selector] boolValue];
-            }
-        }
+        result = [defaults boolForKey:methodKey];
     }
     pthread_mutex_unlock(&cacheMutex);
-    return value;
+    return result;
 }
 
 void updateAllKeys(void) {
@@ -369,7 +373,8 @@ void SearchHook() {
 
 %ctor {
     defaults = [NSUserDefaults standardUserDefaults];
-    [defaults registerDefaults:@{EnabledKey: @YES}];
+    prefixLength = [Prefix length];
+    keyCache = [NSMutableDictionary new];
 
     pthread_mutexattr_t attributes;
     pthread_mutexattr_init(&attributes);
