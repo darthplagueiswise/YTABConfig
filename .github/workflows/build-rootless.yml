@@ -96,10 +96,27 @@ jobs:
           BUILD_STATUS=$?
           set -e
           if [ "$BUILD_STATUS" -ne 0 ]; then
-            ERROR_SUMMARY="$(grep -E '(^|[[:space:]])(fatal )?error:' "$RUNNER_TEMP/ytab-rootless-build.log" | tail -n 1 | sed -E 's/^[^:]+:[0-9]+:[0-9]+: //' | tr '\n\r' '  ' | cut -c1-82)"
-            if [ -z "$ERROR_SUMMARY" ]; then
-              ERROR_SUMMARY="rootless build failed without a parsed clang error"
-            fi
+            ERROR_SUMMARY="$(python3 - "$RUNNER_TEMP/ytab-rootless-build.log" <<'PY'
+          import re, sys
+          text = open(sys.argv[1], errors="replace").read()
+          text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
+          lines = [line.strip() for line in text.splitlines() if line.strip()]
+          priority = [
+              "error:", "undefined symbols", "undefined symbol", "linker command failed",
+              "no such file", "not found", "cannot", "expected", "undeclared",
+              "unavailable", "failed", "make[",
+          ]
+          chosen = ""
+          for needle in priority:
+              matches = [line for line in lines if needle in line.lower()]
+              if matches:
+                  chosen = matches[-1]
+                  break
+          if not chosen and lines:
+              chosen = " | ".join(lines[-3:])
+          print(chosen[:82] or "rootless build failed without output")
+          PY
+            )"
             echo "::error::$ERROR_SUMMARY"
             STATUS_JSON="$(python3 - "$ERROR_SUMMARY" <<'PY'
           import json, sys
