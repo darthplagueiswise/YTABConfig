@@ -74,6 +74,19 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     }
 }
 
+static UITableViewCell *YTABModernEngineCell(id controller,
+                                             UITableView *tableView,
+                                             NSIndexPath *indexPath) {
+    Class modernClass = object_getClass(controller);
+    Class engineClass = class_getSuperclass(modernClass);
+    SEL selector = @selector(tableView:cellForRowAtIndexPath:);
+    Method method = engineClass ? class_getInstanceMethod(engineClass, selector) : NULL;
+    IMP implementation = method ? method_getImplementation(method) : NULL;
+    if (!implementation) return nil;
+    return ((UITableViewCell *(*)(id, SEL, UITableView *, NSIndexPath *))implementation)(
+        controller, selector, tableView, indexPath);
+}
+
 @interface YTABRuntimePatchCell : UITableViewCell
 @property(nonatomic, strong) UILabel *selectorLabel;
 @property(nonatomic, strong) UILabel *ownerLabel;
@@ -168,7 +181,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 
 - (id)ytab_methodAtIndexPath:(NSIndexPath *)indexPath {
     NSArray *methods = [self ytab_visibleMethods];
-    if (indexPath.row < 0 || (NSUInteger)indexPath.row >= methods.count) return nil;
+    if ((NSUInteger)indexPath.row >= methods.count) return nil;
     return methods[(NSUInteger)indexPath.row];
 }
 
@@ -268,9 +281,9 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 
 - (UITableViewCell *)tableView:(UITableView *)tableView
          cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    // Ask the engine UI for its current native/state string, then render that
-    // information in a readable multiline native cell.
-    UITableViewCell *engineCell = [super tableView:tableView cellForRowAtIndexPath:indexPath];
+    // Ask the engine's concrete implementation for its current native/state
+    // string without relying on a private method declaration in the header.
+    UITableViewCell *engineCell = YTABModernEngineCell(self, tableView, indexPath);
 
     static NSString *identifier = @"YTABRuntimeModernPatchCell";
     YTABRuntimePatchCell *cell =
