@@ -33,6 +33,7 @@
 // demais (usado em toda a UI de conta) e forçar YES pra qualquer conta pode
 // quebrar o account switcher. Fácil de adicionar depois se necessário.
 
+#import <substrate.h>
 #import <objc/runtime.h>
 #import <string.h>
 #import <Foundation/Foundation.h>
