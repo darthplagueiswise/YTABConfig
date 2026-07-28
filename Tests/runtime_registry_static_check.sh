@@ -121,13 +121,20 @@ if [[ -z "$global_line" || -z "$hot_line" || -z "$search_line" || -z "$orig_line
     exit 1
 fi
 
+
 # RyukGram-style runtime patch browser. Full class/method discovery is on demand;
 # launch restores only explicitly persisted Class#selector keys.
 require_text Makefile "YTABRuntimeBrowser.m YTABRuntimeBrowserHooks.x YTABRuntimeBrowserEntry.x"
 require_text YTABRuntimeBrowserEntry.x '#import "YTABRuntimeBrowser.h"'
 require_text YTABRuntimeBrowserEntry.x "Open Runtime Patch Browser"
 require_text YTABRuntimeBrowserEntry.x "YTABRuntimeBrowserPersistedOverrideCount()"
-require_text YTABRuntimeBrowserEntry.x "YTABRuntimeBrowserCategory = 405"
+require_text YTABRuntimeBrowserEntry.x "YTABCFeatureLabCategory = 404"
+require_text YTABRuntimeBrowserEntry.x '@"YTABC_FEATURE_LAB"'
+require_text YTABRuntimeBrowserEntry.x "YTABItemsByAddingRuntimeBrowser"
+require_text YTABRuntimeBrowserEntry.x "YTABInstallFeatureLabDelegateHookIfNeeded(dataDelegate);"
+reject_text YTABRuntimeBrowserEntry.x "YTABRuntimeBrowserCategory = 405"
+reject_text YTABRuntimeBrowserEntry.x "orderedCategories"
+reject_text YTABRuntimeBrowserEntry.x "settingsCategoryOrder"
 require_text YTABRuntimeBrowser.m "objc_copyClassList(&classCount)"
 require_text YTABRuntimeBrowser.m "class_getImageName(cls)"
 require_text YTABRuntimeBrowser.m "class_copyMethodList(owner, &methodCount)"
