@@ -1,9 +1,34 @@
 name: Build YTABConfig (rootless, dylib, and Feather)
 
 on:
-  pull_request:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      build_rootless:
+        description: Build rootless deb
+        default: true
+        required: false
+        type: boolean
+      build_dylib:
+        description: Build standalone YTABConfig.dylib and sideload bundle
+        default: true
+        required: false
+        type: boolean
+      build_feather:
+        description: Build Feather-compatible deb
+        default: true
+        required: false
+        type: boolean
+      upload_artifacts:
+        description: Upload artifacts
+        default: true
+        required: false
+        type: boolean
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -15,12 +40,24 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: read
-      statuses: write
 
     env:
       SDK_NAME: iPhoneOS26.2.sdk
+      BUILD_ROOTLESS: ${{ github.event_name != 'workflow_dispatch' || inputs.build_rootless }}
+      BUILD_DYLIB: ${{ github.event_name != 'workflow_dispatch' || inputs.build_dylib }}
+      BUILD_FEATHER: ${{ github.event_name != 'workflow_dispatch' || inputs.build_feather }}
+      UPLOAD_ARTIFACTS: ${{ github.event_name != 'workflow_dispatch' || inputs.upload_artifacts }}
 
     steps:
+      - name: Validate selection
+        run: |
+          if [ "$BUILD_ROOTLESS" != "true" ] &&
+              [ "$BUILD_DYLIB" != "true" ] &&
+              [ "$BUILD_FEATHER" != "true" ]; then
+            echo "::error::Select at least one build variant."
+            exit 1
+          fi
+
       - name: Checkout Main
         uses: actions/checkout@v4
         with:
@@ -72,83 +109,169 @@ jobs:
         env:
           THEOS: ${{ github.workspace }}/theos
 
-      - name: Validate contracts
+      - name: Validate build configuration
         run: |
           cd main
           chmod +x build.sh
+          test -d "$THEOS/sdks/$SDK_NAME"
+          grep -q 'iphone:clang:26.2' Makefile
+          grep -q '^ARCHS = arm64$' Makefile
           bash -n build.sh
           bash Tests/runtime_registry_static_check.sh
           bash Tests/employee_experiments_static_check.sh
           bash Tests/app_catalog_export_static_check.sh
           bash scripts/package_metadata_static_check.sh
           bash scripts/polished_ui_static_check.sh
-          python3 -m venv "$RUNNER_TEMP/ytab-tests-venv"
-          "$RUNNER_TEMP/ytab-tests-venv/bin/python" -m pip install --disable-pip-version-check jsonschema
-          "$RUNNER_TEMP/ytab-tests-venv/bin/python" -m unittest discover -s tests -v
         env:
           THEOS: ${{ github.workspace }}/theos
 
-      - name: Build rootless and report exact compiler error
+      - name: Validate Python contracts
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ytab-tests-venv"
+          "$RUNNER_TEMP/ytab-tests-venv/bin/python" -m pip install \
+            --disable-pip-version-check jsonschema
+          cd main
+          "$RUNNER_TEMP/ytab-tests-venv/bin/python" -m unittest \
+            discover -s tests -v
+
+      - name: Get Version
+        id: version
+        run: |
+          VERSION="$(awk '/Version:/ {print $2; exit}' main/control)"
+          test -n "$VERSION"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build rootless deb
+        if: env.BUILD_ROOTLESS == 'true'
         run: |
           cd main
           set +e
-          ./build.sh rootless > "$RUNNER_TEMP/ytab-rootless-build.log" 2>&1
-          BUILD_STATUS=$?
+          ./build.sh rootless 2>&1 | tee "$RUNNER_TEMP/ytab-rootless-build.log"
+          BUILD_STATUS=${PIPESTATUS[0]}
           set -e
           if [ "$BUILD_STATUS" -ne 0 ]; then
-            ERROR_SUMMARY="$(python3 - "$RUNNER_TEMP/ytab-rootless-build.log" <<'PY'
-          import re, sys
-          text = open(sys.argv[1], errors="replace").read()
-          text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
-          lines = [line.strip() for line in text.splitlines() if line.strip()]
-          priority = [
-              "error:", "undefined symbols", "undefined symbol", "linker command failed",
-              "no such file", "not found", "cannot", "expected", "undeclared",
-              "unavailable", "failed", "make[",
-          ]
-          chosen = ""
-          for needle in priority:
-              matches = [line for line in lines if needle in line.lower()]
-              if matches:
-                  chosen = matches[-1]
-                  break
-          if not chosen and lines:
-              chosen = " | ".join(lines[-3:])
-          print(chosen[:82] or "rootless build failed without output")
-          PY
-            )"
-            echo "::error::$ERROR_SUMMARY"
-            STATUS_JSON="$(python3 - "$ERROR_SUMMARY" <<'PY'
-          import json, sys
-          print(json.dumps({
-              "state": "error",
-              "context": "compiler:" + sys.argv[1],
-              "description": "rootless compiler failure",
-              "target_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
-          }))
-          PY
-            )"
-            curl --fail-with-body --silent --show-error \
-              -X POST \
-              -H "Authorization: Bearer $GITHUB_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-              -d "$STATUS_JSON"
-            cat "$RUNNER_TEMP/ytab-rootless-build.log"
             exit "$BUILD_STATUS"
           fi
-          cat "$RUNNER_TEMP/ytab-rootless-build.log"
+          DEB="$(ls -t packages/*-rootless.deb packages/*.deb 2>/dev/null | head -n1)"
+          test -n "$DEB"
+          cp "$DEB" "packages/YTABConfig_${VERSION}_rootless.deb"
+          dpkg-deb -I "packages/YTABConfig_${VERSION}_rootless.deb"
+          STAGE="$(mktemp -d)"
+          dpkg-deb -x "packages/YTABConfig_${VERSION}_rootless.deb" "$STAGE"
+          ROOTLESS_DYLIB="$(find "$STAGE" -type f -name YTABConfig.dylib -print -quit)"
+          test -n "$ROOTLESS_DYLIB"
+          otool -D "$ROOTLESS_DYLIB" | grep -Fx '@rpath/YTABConfig.dylib'
+          otool -L "$ROOTLESS_DYLIB" |
+            grep -F '@rpath/CydiaSubstrate.framework/CydiaSubstrate'
+          rm -rf "$STAGE"
+          ls -la packages
         env:
           THEOS: ${{ github.workspace }}/theos
           THEOS_PLATFORM_DEB_COMPRESSION_TYPE: lzma
           THEOS_PLATFORM_DEB_COMPRESSION_LEVEL: 9
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload failed rootless build log
-        if: failure()
+        if: failure() && env.BUILD_ROOTLESS == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: YTABConfig_rootless_failure_log
           path: ${{ runner.temp }}/ytab-rootless-build.log
+          if-no-files-found: error
+
+      - name: Build standalone YTABConfig.dylib
+        if: env.BUILD_DYLIB == 'true'
+        run: |
+          cd main
+          ./build.sh dylib
+          mv packages/YTABConfig-injector.dylib \
+            "packages/YTABConfig_v${VERSION}_injector.dylib"
+          mv packages/YTABConfig-sideload.zip \
+            "packages/YTABConfig_v${VERSION}_sideload.zip"
+          INJECTOR_DYLIB="packages/YTABConfig_v${VERSION}_injector.dylib"
+          SIDELOAD_ZIP="packages/YTABConfig_v${VERSION}_sideload.zip"
+          test "$(lipo -archs "$INJECTOR_DYLIB")" = "arm64"
+          otool -D "$INJECTOR_DYLIB" |
+            grep -Fx '@executable_path/YTABConfig.dylib'
+          otool -L "$INJECTOR_DYLIB" |
+            grep -F '@rpath/CydiaSubstrate.framework/CydiaSubstrate'
+          if otool -L "$INJECTOR_DYLIB" |
+              grep -Fq '/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate'; then
+            echo "::error::Sideload dylib still has an absolute jailbreak-only substrate path."
+            exit 1
+          fi
+
+          STAGE="$(mktemp -d)"
+          unzip -q "$SIDELOAD_ZIP" -d "$STAGE"
+          FRAMEWORKS_DYLIB="$STAGE/Frameworks/YTABConfig.dylib"
+          test -f "$FRAMEWORKS_DYLIB"
+          test -d "$STAGE/YTABC.bundle"
+          test "$(lipo -archs "$FRAMEWORKS_DYLIB")" = "arm64"
+          otool -D "$FRAMEWORKS_DYLIB" |
+            grep -Fx '@executable_path/Frameworks/YTABConfig.dylib'
+          otool -L "$FRAMEWORKS_DYLIB" |
+            grep -F '@rpath/CydiaSubstrate.framework/CydiaSubstrate'
+          if unzip -Z1 "$SIDELOAD_ZIP" | grep -Fxq 'YTABConfig.dylib'; then
+            echo "::error::Frameworks-layout ZIP must not place YTABConfig.dylib at app root."
+            exit 1
+          fi
+          rm -rf "$STAGE"
+          ls -la packages
+        env:
+          THEOS: ${{ github.workspace }}/theos
+
+      - name: Build Feather-compatible deb
+        if: env.BUILD_FEATHER == 'true'
+        run: |
+          cd main
+          ./build.sh feather
+          FEATHER_DEB="packages/YTABConfig_${VERSION}_feather.deb"
+          test -f "$FEATHER_DEB"
+          ar t "$FEATHER_DEB" | grep -Fx 'data.tar.xz'
+          STAGE="$(mktemp -d)"
+          dpkg-deb -x "$FEATHER_DEB" "$STAGE"
+          FEATHER_DYLIB="$STAGE/var/jb/Library/MobileSubstrate/DynamicLibraries/YTABConfig.dylib"
+          test -f "$FEATHER_DYLIB"
+          test -d "$STAGE/var/jb/Library/Application Support/YTABC.bundle"
+          test "$(lipo -archs "$FEATHER_DYLIB")" = "arm64"
+          otool -D "$FEATHER_DYLIB" |
+            grep -Fx '@executable_path/Frameworks/YTABConfig.dylib'
+          otool -L "$FEATHER_DYLIB" |
+            grep -F '@rpath/CydiaSubstrate.framework/CydiaSubstrate'
+          if otool -L "$FEATHER_DYLIB" |
+              grep -Fq '/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate'; then
+            echo "::error::Feather dylib still has an absolute jailbreak-only substrate path."
+            exit 1
+          fi
+          rm -rf "$STAGE"
+          ls -la packages
+        env:
+          THEOS: ${{ github.workspace }}/theos
+          THEOS_PLATFORM_DEB_COMPRESSION_TYPE: lzma
+          THEOS_PLATFORM_DEB_COMPRESSION_LEVEL: 9
+
+      - name: Upload rootless deb
+        if: env.UPLOAD_ARTIFACTS == 'true' && env.BUILD_ROOTLESS == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: YTABConfig_${{ steps.version.outputs.version }}_rootless
+          path: main/packages/YTABConfig_${{ steps.version.outputs.version }}_rootless.deb
+          if-no-files-found: error
+
+      - name: Upload YTABConfig sideload files
+        if: env.UPLOAD_ARTIFACTS == 'true' && env.BUILD_DYLIB == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: YTABConfig_dylib_v${{ steps.version.outputs.version }}
+          path: |
+            main/packages/YTABConfig_v${{ steps.version.outputs.version }}_injector.dylib
+            main/packages/YTABConfig_v${{ steps.version.outputs.version }}_sideload.zip
+          if-no-files-found: error
+
+      - name: Upload Feather-compatible deb
+        if: env.UPLOAD_ARTIFACTS == 'true' && env.BUILD_FEATHER == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: YTABConfig_${{ steps.version.outputs.version }}_feather
+          path: main/packages/YTABConfig_${{ steps.version.outputs.version }}_feather.deb
           if-no-files-found: error
