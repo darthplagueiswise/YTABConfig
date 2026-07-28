@@ -31,12 +31,54 @@ NSUserDefaults *defaults;
 extern NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *cache;
 extern BOOL YTABCPushNativeExperiments(id settingsViewController);
 extern BOOL YTABCPresentNativeExperiments(id settingsViewController);
-extern void YTABCInstallInternalIdentityHooks(void);
+extern void YTABCInstallEmployeeExperimentHooks(void);
+extern BOOL YTABCRunPhenotypeResync(void);
+extern BOOL YTABCClearNativeExperimentsCaches(void);
 NSSet<NSString *> *allKeysSet;
 BOOL allKeysNeedsUpdate = YES;
 pthread_mutex_t cacheMutex;
 NSMutableDictionary<NSString *, NSString *> *keyCache;
 NSUInteger prefixLength;
+
+static YTSettingsSectionItem *YTABCTestSwitchItem(
+    Class itemClass, NSString *title, NSString *description,
+    NSString *identifier, NSString *defaultsKey
+) {
+    return [(id)itemClass switchItemWithTitle:title
+        titleDescription:description
+        accessibilityIdentifier:identifier
+        switchOn:[defaults boolForKey:defaultsKey]
+        switchBlock:^BOOL (YTSettingsCell *cell, BOOL enabled) {
+            (void)cell;
+            [defaults setBool:enabled forKey:defaultsKey];
+            // Hooks are installed once; every replacement reads its own key.
+            YTABCInstallEmployeeExperimentHooks();
+            return YES;
+        }
+        settingItemId:0];
+}
+
+static YTSettingsSectionItem *YTABCTestHeadingItem(
+    Class itemClass, NSString *title, NSString *description
+) {
+    YTSettingsSectionItem *item = [(id)itemClass itemWithTitle:title
+        titleDescription:description
+        accessibilityIdentifier:nil
+        detailTextBlock:nil
+        selectBlock:nil];
+    item.enabled = NO;
+    return item;
+}
+
+static void YTABCShowTestResult(UIViewController *presenter, NSString *title, BOOL success,
+                                NSString *successMessage, NSString *failureMessage) {
+    if (!presenter) return;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
+        message:(success ? successMessage : failureMessage)
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [presenter presentViewController:alert animated:YES completion:nil];
+}
 
 BOOL tweakEnabled() {
     return [defaults boolForKey:EnabledKey];
@@ -280,9 +322,6 @@ BOOL YTABResetAllRuntimeOverrides(
             }];
         [sectionItems addObject:featureLab];
 
-        // Duas versões pra testar (ambas instanciam via initWithParentResponder:;
-        // diferem só na apresentação). Ver YTNativeExperiments.x.
-        // V1 — push na própria nav do settings (jeito nativo do YT).
         YTSettingsSectionItem *nativeExpPush = [YTSettingsSectionItemClass itemWithTitle:@"Open native experiments (push)"
             titleDescription:@"Force-open via pushViewController: on the settings nav (orphaned VC, server-driven)"
             accessibilityIdentifier:@"YTABC_NATIVE_EXPERIMENTS_PUSH"
@@ -296,7 +335,6 @@ BOOL YTABResetAllRuntimeOverrides(
             }];
         [sectionItems addObject:nativeExpPush];
 
-        // V2 — modal numa nav nova com botão Done (estilo FBTweak).
         YTSettingsSectionItem *nativeExpModal = [YTSettingsSectionItemClass itemWithTitle:@"Open native experiments (modal / FBTweak)"
             titleDescription:@"Force-open modally in a fresh nav with a Done button (FBTweak opener style)"
             accessibilityIdentifier:@"YTABC_NATIVE_EXPERIMENTS_MODAL"
@@ -310,19 +348,105 @@ BOOL YTABResetAllRuntimeOverrides(
             }];
         [sectionItems addObject:nativeExpModal];
 
-        // Flip client-side Googler/internal identity gates (Phenotype).
-        // Aplica ao vivo pras classes já carregadas; resto no próximo launch.
-        YTSettingsSectionItem *internalIdentity = [YTSettingsSectionItemClass switchItemWithTitle:@"Internal identity (Googler/dogfood)"
-            titleDescription:@"Force client-side Phenotype Googler/internal gates to YES. Unlocks client-gated internal behavior. Server-driven screens (e.g. Search Experiments) still authorize by the real account. Restart recommended."
-            accessibilityIdentifier:nil
-            switchOn:[defaults boolForKey:@"YTABCInternalIdentity"]
-            switchBlock:^BOOL (YTSettingsCell *cell, BOOL enabled) {
-                [defaults setBool:enabled forKey:@"YTABCInternalIdentity"];
-                if (enabled) YTABCInstallInternalIdentityHooks();
-                return YES;
-            }
-            settingItemId:0];
-        [sectionItems addObject:internalIdentity];
+        [sectionItems addObject:YTABCTestHeadingItem(
+            YTSettingsSectionItemClass, @"Phenotype / Googler tests",
+            @"Each switch changes exactly one client-side signal. Hooks are live; no restart is required."
+        )];
+
+        [sectionItems addObject:YTABCTestSwitchItem(
+            YTSettingsSectionItemClass, @"Force isGooglerAccount:",
+            @"Returns YES only from PHTHeterodyneSyncer’s per-account google.com domain gate.",
+            @"YTABC_FORCE_IS_GOOGLER_ACCOUNT", @"YTABCForceIsGooglerAccount"
+        )];
+        [sectionItems addObject:YTABCTestSwitchItem(
+            YTSettingsSectionItemClass, @"Force hasGooglerAccount",
+            @"Returns YES only from the aggregate account gate used by Phenotype client properties.",
+            @"YTABC_FORCE_HAS_GOOGLER_ACCOUNT", @"YTABCForceHasGooglerAccount"
+        )];
+        [sectionItems addObject:YTABCTestSwitchItem(
+            YTSettingsSectionItemClass, @"Force isMaybeGooglerGmscore",
+            @"Sets only the EXHClientProperties request bit after YouTube builds the native object.",
+            @"YTABC_FORCE_MAYBE_GOOGLER", @"YTABCForceMaybeGooglerClientProperty"
+        )];
+        [sectionItems addObject:YTABCTestSwitchItem(
+            YTSettingsSectionItemClass, @"Force standard syncer internal bit",
+            @"Diagnostic-only test of PHTHeterodyneSyncer.isInternalHeterodyneSyncer; it does not create an internal syncer or token.",
+            @"YTABC_FORCE_STANDARD_INTERNAL_SYNCER", @"YTABCForceStandardInternalSyncer"
+        )];
+        [sectionItems addObject:YTABCTestSwitchItem(
+            YTSettingsSectionItemClass, @"Trace Phenotype requests",
+            @"Logs maybe-Googler, dogfood-token presence, fetch reason and native syncer class.",
+            @"YTABC_TRACE_PHENOTYPE", @"YTABCTracePhenotype"
+        )];
+        [sectionItems addObject:YTABCTestSwitchItem(
+            YTSettingsSectionItemClass, @"Auto-resync after native sync",
+            @"Queues one extra sync only after YouTube supplies a real native Heterodyne syncer.",
+            @"YTABC_AUTO_PHENOTYPE_RESYNC", @"YTABCAutoPhenotypeResync"
+        )];
+
+        YTSettingsSectionItem *resyncPhenotype = [YTSettingsSectionItemClass itemWithTitle:@"Run Phenotype resync now"
+            titleDescription:@"Reuses the last syncer observed from YouTube’s own sync path; never constructs a fake server."
+            accessibilityIdentifier:@"YTABC_RUN_PHENOTYPE_RESYNC"
+            detailTextBlock:nil
+            selectBlock:^BOOL (YTSettingsCell *cell, NSUInteger arg1) {
+                (void)cell; (void)arg1;
+                BOOL queued = YTABCRunPhenotypeResync();
+                YTABCShowTestResult(settingsViewController, @"Phenotype resync", queued,
+                    @"The native resync was queued with the captured syncer.",
+                    @"No native syncer has been observed yet. Let YouTube complete one Phenotype sync, then try again.");
+                return queued;
+            }];
+        [sectionItems addObject:resyncPhenotype];
+
+        [sectionItems addObject:YTABCTestHeadingItem(
+            YTSettingsSectionItemClass, @"Innertube experiments tests",
+            @"Services 51/49/50 are search, opt-in and opt-out. Trace and local identity-check bypasses are independent."
+        )];
+
+        [sectionItems addObject:YTABCTestSwitchItem(
+            YTSettingsSectionItemClass, @"Trace search (service 51)",
+            @"Logs request creation, identity verification, response or NSError for native experiment search.",
+            @"YTABC_TRACE_SEARCH_51", @"YTABCTraceExperimentsSearch"
+        )];
+        [sectionItems addObject:YTABCTestSwitchItem(
+            YTSettingsSectionItemClass, @"Trace opt-in (service 49)",
+            @"Logs the complete native opt-in request path without changing it.",
+            @"YTABC_TRACE_OPTIN_49", @"YTABCTraceExperimentsOptIn"
+        )];
+        [sectionItems addObject:YTABCTestSwitchItem(
+            YTSettingsSectionItemClass, @"Trace opt-out (service 50)",
+            @"Logs the complete native opt-out request path without changing it.",
+            @"YTABC_TRACE_OPTOUT_50", @"YTABCTraceExperimentsOptOut"
+        )];
+        [sectionItems addObject:YTABCTestSwitchItem(
+            YTSettingsSectionItemClass, @"Bypass local identity check: search",
+            @"Changes verifyActiveIdentity to NO only for service 51. Server authentication remains untouched.",
+            @"YTABC_BYPASS_IDENTITY_SEARCH_51", @"YTABCBypassIdentitySearch"
+        )];
+        [sectionItems addObject:YTABCTestSwitchItem(
+            YTSettingsSectionItemClass, @"Bypass local identity check: opt-in",
+            @"Changes verifyActiveIdentity to NO only for service 49. Server authorization still applies.",
+            @"YTABC_BYPASS_IDENTITY_OPTIN_49", @"YTABCBypassIdentityOptIn"
+        )];
+        [sectionItems addObject:YTABCTestSwitchItem(
+            YTSettingsSectionItemClass, @"Bypass local identity check: opt-out",
+            @"Changes verifyActiveIdentity to NO only for service 50. Server authorization still applies.",
+            @"YTABC_BYPASS_IDENTITY_OPTOUT_50", @"YTABCBypassIdentityOptOut"
+        )];
+
+        YTSettingsSectionItem *clearExperimentCaches = [YTSettingsSectionItemClass itemWithTitle:@"Clear native experiments caches"
+            titleDescription:@"Calls clearCaches on the last YTExperimentsServiceImpl instance observed by the native UI."
+            accessibilityIdentifier:@"YTABC_CLEAR_NATIVE_EXPERIMENTS_CACHE"
+            detailTextBlock:nil
+            selectBlock:^BOOL (YTSettingsCell *cell, NSUInteger arg1) {
+                (void)cell; (void)arg1;
+                BOOL cleared = YTABCClearNativeExperimentsCaches();
+                YTABCShowTestResult(settingsViewController, @"Experiments caches", cleared,
+                    @"The native experiments service cache was cleared.",
+                    @"The native experiments service has not made a request yet. Open the menu and search first.");
+                return cleared;
+            }];
+        [sectionItems addObject:clearExperimentCaches];
     }
 
     YTSettingsSectionItem *thread = [YTSettingsSectionItemClass itemWithTitle:LOC(@"OPEN_MEGATHREAD")
