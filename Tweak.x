@@ -10,7 +10,7 @@ extern pthread_mutex_t cacheMutex;
 NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *cache;
 
 extern void SearchHook(void);
-extern void YTABCInstallInternalIdentityHooks(void);
+extern void YTABCInstallEmployeeExperimentHooks(void);
 extern BOOL tweakEnabled(void);
 extern BOOL groupedSettings(void);
 extern void updateAllKeys(void);
@@ -83,6 +83,11 @@ static void hookClass(NSObject *instance) {
 %hook YTAppDelegate
 
 - (BOOL)application:(id)application didFinishLaunchingWithOptions:(id)options {
+    // Install the verified Objective-C hooks before YouTube starts Phenotype or
+    // InnerTube work. Replacements are no-ops unless their individual switches
+    // are enabled, and the installer is idempotent.
+    YTABCInstallEmployeeExperimentHooks();
+
     if (tweakEnabled()) {
         updateAllKeys();
         YTGlobalConfig *globalConfig = nil;
@@ -110,11 +115,6 @@ static void hookClass(NSObject *instance) {
         hookClass(coldConfig);
         hookClass(hotConfig);
 
-        // Flip client-side Googler/internal gates (Phenotype) if enabled.
-        if ([[NSUserDefaults standardUserDefaults] boolForKey:@"YTABCInternalIdentity"]) {
-            YTABCInstallInternalIdentityHooks();
-        }
-
         if (!groupedSettings()) SearchHook();
     }
     return %orig;
@@ -128,6 +128,11 @@ static void hookClass(NSObject *instance) {
     if ([NSFileManager.defaultManager fileExistsAtPath:modulePath]) {
         [[NSBundle bundleWithPath:modulePath] load];
     }
+
+    // Main-executable Objective-C classes are registered before image
+    // constructors. Install once here, then retry idempotently at the start of
+    // didFinishLaunching in case a future build moves a target to a later image.
+    YTABCInstallEmployeeExperimentHooks();
 
     cache = [NSMutableDictionary new];
     excludedPrefixes = [NSSet setWithArray:@[
