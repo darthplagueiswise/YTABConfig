@@ -40,6 +40,7 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: read
+      statuses: write
 
     env:
       SDK_NAME: iPhoneOS26.2.sdk
@@ -151,6 +152,27 @@ jobs:
           BUILD_STATUS=${PIPESTATUS[0]}
           set -e
           if [ "$BUILD_STATUS" -ne 0 ]; then
+            ERROR_SUMMARY="$(grep -E '(^|[[:space:]])(fatal )?error:' "$RUNNER_TEMP/ytab-rootless-build.log" | tail -n 1 | sed -E 's/^[^:]+:[0-9]+:[0-9]+: //' | tr '\n\r' '  ' | cut -c1-135)"
+            if [ -z "$ERROR_SUMMARY" ]; then
+              ERROR_SUMMARY="rootless build failed; inspect YTABConfig_rootless_failure_log"
+            fi
+            STATUS_JSON="$(python3 - "$ERROR_SUMMARY" <<'PY'
+          import json, sys
+          print(json.dumps({
+              "state": "error",
+              "context": "ytab-rootless-compiler",
+              "description": sys.argv[1],
+              "target_url": f"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+          }))
+          PY
+            )"
+            curl --fail-with-body --silent --show-error \
+              -X POST \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+              -d "$STATUS_JSON"
             exit "$BUILD_STATUS"
           fi
           DEB="$(ls -t packages/*-rootless.deb packages/*.deb 2>/dev/null | head -n1)"
@@ -170,6 +192,7 @@ jobs:
           THEOS: ${{ github.workspace }}/theos
           THEOS_PLATFORM_DEB_COMPRESSION_TYPE: lzma
           THEOS_PLATFORM_DEB_COMPRESSION_LEVEL: 9
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload failed rootless build log
         if: failure() && env.BUILD_ROOTLESS == 'true'
