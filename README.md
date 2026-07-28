@@ -51,6 +51,40 @@ rootless `@rpath/YTABConfig.dylib` identity. Sideload artifacts use explicit
 `@executable_path` identities that must match where the injector copies the
 file.
 
+## Native employee / experiments tests
+
+The native experiments UI and the client-side employee signals are separate
+pipelines. The tweak therefore exposes independent switches instead of one
+combined “employee mode”:
+
+- `PHTHeterodyneSyncer.isGooglerAccount:`
+- `PHTHeterodyneSyncer.hasGooglerAccount`
+- the `EXHClientProperties.isMaybeGooglerGmscore` request bit
+- the standard syncer’s `isInternalHeterodyneSyncer` result (diagnostic only)
+- Phenotype request/sync tracing and an optional one-shot resync
+- individual InnerTube traces for search `51`, opt-in `49`, and opt-out `50`
+- individual local `verifyActiveIdentity` bypasses for those same services
+
+All Objective-C hooks are installed once with exact 21.30.5 type-encoding
+checks. Their replacements read their own preference at call time, so changing a
+test switch is live and does not install or remove methods. No function inline
+hooks, dyld image callbacks, or class sweeps are used. `MSHookMessageEx` is used
+only for ABI-compatible Objective-C messages.
+
+Phenotype resync never constructs a `PHTInternalHeterodyneSyncer` and never
+passes a guessed server object. The tweak captures the real
+`PHTHeterodyneSyncerProtocol` object when YouTube enters
+`syncExperimentsWithServerInternal:syncAfterConfiguration:callback:` and reuses
+that exact object for the manual or optional one-shot resync. Until a native
+sync has supplied it, the resync action reports unavailable.
+
+InnerTube bypass tests affect only the client-side active-identity comparison
+for a request already tagged as service 49, 50, or 51. They do not create an
+account, dogfood token, auth token, server entitlement, or employee allowlist.
+The separate trace switches log the native request, identity-check state,
+response class, or NSError so device testing can distinguish a local identity
+mismatch from server rejection.
+
 ## Sideload packaging
 
 For Feather, use `YTABConfig_2.0.0_feather.deb` with the default
