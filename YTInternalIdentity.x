@@ -1,98 +1,77 @@
 // YTInternalIdentity.x
 //
-// Flip client-side "Googler / internal" identity gates in YouTube — o
-// equivalente do FBTEmployeeMode.x do FBTweak, adaptado para as classes reais
-// do YouTube (validadas por disassembly no exec arm64, não por nome).
+// Flip client-side "Googler / internal" nos gates do Phenotype — o equivalente
+// do FBTEmployeeMode.x do FBTweak, no formato Logos (%group/%hook), adaptado às
+// classes reais do YouTube (validadas por disassembly no exec arm64).
 //
-// Onde ficam os gates de identidade interna no YouTube (NÃO em classes YT*):
-// o YouTube usa o Phenotype (PHT) do Google — sistema compartilhado de entrega
-// de flags/experimentos — para determinar conta Googler / build interno:
-//   -[PHTHeterodyneSyncer isGooglerAccount:]          B24@0:8@16
-//        (checa o domínio da conta client-side; retorna BOOL)
-//   -[PHTHeterodyneSyncer hasGooglerAccount]          B16@0:8
-//        (itera contas chamando isGooglerAccount:)
-//   -[PHTHeterodyneSyncer isInternalHeterodyneSyncer] B16@0:8
-//        (neste build: mov w0,#0; ret  -> retorna NO fixo)
+// Por que a superfície é pequena (análise exaustiva do exec, não chute):
+//   * O YouTube NÃO importa nenhuma função C de gating (varridos 8061 imports;
+//     só OpenGL/SwiftUI/Swift stdlib) -> não há camada de fishhook estilo
+//     FBTInternalImports (EasyGating). Funções C internas exigiriam inline hook
+//     em __TEXT, proibido em sideload.
+//   * O YTIInnerTubeContext (proto do contexto InnerTube) não tem campo
+//     user/internal/role -> nada pra flipar no request; a identidade é o token
+//     da conta autenticada (-[YTAccountScopedInnerTubeServiceImpl
+//     performHTTPRequest:withIdentity:] / verifyActiveIdentity:), resolvida
+//     server-side.
+//   * O YTSettingsExperimentsViewController não tem gate de elegibilidade
+//     client-side (só hasDefaultSelection/isSettingsChanged/textFieldShouldReturn:).
+//   * Não existe getter isEmployee/isInternalUser em classes YT/GIK/SSO/OGL;
+//     "internalUser" é entidade de servidor (TSLSSEInternalUser : GPBMessage).
+//   * Flags "internal/dogfood/debug" de config já são cobertas pelo core do
+//     YTABConfig (ele hooka todos os getters BOOL de ColdConfig/HotConfig).
+//
+// Logo, o único NET-NEW client-side é a determinação de conta Googler / build
+// interno do Phenotype (PHT), sistema compartilhado do Google que entrega
+// flags/experimentos:
+//   -[PHTHeterodyneSyncer isGooglerAccount:]           B24@0:8@16 (checa domínio da conta)
+//   -[PHTHeterodyneSyncer hasGooglerAccount]           B16@0:8   (itera contas -> isGooglerAccount:)
+//   -[PHTHeterodyneSyncer isInternalHeterodyneSyncer]  B16@0:8   (neste build: retorna NO fixo)
 //   -[PHTInternalHeterodyneSyncer isInternalHeterodyneSyncer] B16@0:8
 //
-// IMPORTANTE (sem delírio): isto flipa a CRENÇA client-side do app sobre ser
-// Googler/interno, o que destrava comportamento/flags internas gated no cliente
-// pelo Phenotype — igual o employee-mode do FBTweak destrava features internas
-// do Facebook. NÃO forja token no servidor. A tela "Search Experiments" puxa os
-// dados via InnerTube, que autoriza pela IDENTIDADE DA CONTA autenticada
-// (-[YTAccountScopedInnerTubeServiceImpl performHTTPRequest:withIdentity:] /
-// verifyActiveIdentity:), resolvida server-side pelo token — não há campo
-// "internal" no proto do contexto pra flipar. Então essa tela específica pode
-// continuar dando "Erro ao carregar" numa conta não-allowlisted. Quem valida o
-// resultado no device é o usuário.
+// Isto flipa a CRENÇA client-side sobre ser Googler/interno (destrava o que for
+// gated no cliente pelo Phenotype) — igual o employee-mode do FBTweak, que não
+// forja token de servidor. A tela "Search Experiments" puxa dados via InnerTube
+// autorizado pela conta real, então pode continuar dando "Erro ao carregar" numa
+// conta não-allowlisted. Quem valida no device é o usuário.
 //
-// Sideload-safe: só ObjC swizzle (MSHookMessageEx), com verificação de ABI
-// antes de hookar (não faz inline hook em __TEXT). Idempotente.
-//
-// O OGLAccount isGoogleAccount (OneGoogle) NÃO é hookado por padrão: é amplo
-// demais (usado em toda a UI de conta) e forçar YES pra qualquer conta pode
-// quebrar o account switcher. Fácil de adicionar depois se necessário.
+// Sideload-safe: só ObjC swizzle via Logos %hook (usa MSHookMessageEx por baixo,
+// GOT/__DATA, nunca patch em __TEXT).
 
-#import <substrate.h>
-#import <objc/runtime.h>
-#import <string.h>
 #import <Foundation/Foundation.h>
 
 static inline BOOL YTABCInternalIdentityOn(void) {
     return [[NSUserDefaults standardUserDefaults] boolForKey:@"YTABCInternalIdentity"];
 }
 
-typedef BOOL (*YTABCBoolVoidFn)(id, SEL);
-typedef BOOL (*YTABCBoolObjFn)(id, SEL, id);
+%group YTABCInternalGates
 
-static YTABCBoolObjFn  orig_isGooglerAccount   = NULL;
-static YTABCBoolVoidFn orig_hasGooglerAccount  = NULL;
-static YTABCBoolVoidFn orig_isInternalSyncer   = NULL;
-static YTABCBoolVoidFn orig_isInternalSyncer2  = NULL;
+%hook PHTHeterodyneSyncer
+- (BOOL)isGooglerAccount:(id)account {
+    return YTABCInternalIdentityOn() ? YES : %orig;
+}
+- (BOOL)hasGooglerAccount {
+    return YTABCInternalIdentityOn() ? YES : %orig;
+}
+- (BOOL)isInternalHeterodyneSyncer {
+    return YTABCInternalIdentityOn() ? YES : %orig;
+}
+%end
 
-static BOOL ytabc_isGooglerAccount(id self, SEL _cmd, id account) {
-    if (YTABCInternalIdentityOn()) return YES;
-    return orig_isGooglerAccount ? orig_isGooglerAccount(self, _cmd, account) : NO;
+%hook PHTInternalHeterodyneSyncer
+- (BOOL)isInternalHeterodyneSyncer {
+    return YTABCInternalIdentityOn() ? YES : %orig;
 }
-static BOOL ytabc_hasGooglerAccount(id self, SEL _cmd) {
-    if (YTABCInternalIdentityOn()) return YES;
-    return orig_hasGooglerAccount ? orig_hasGooglerAccount(self, _cmd) : NO;
-}
-static BOOL ytabc_isInternalSyncer(id self, SEL _cmd) {
-    if (YTABCInternalIdentityOn()) return YES;
-    return orig_isInternalSyncer ? orig_isInternalSyncer(self, _cmd) : NO;
-}
-static BOOL ytabc_isInternalSyncer2(id self, SEL _cmd) {
-    if (YTABCInternalIdentityOn()) return YES;
-    return orig_isInternalSyncer2 ? orig_isInternalSyncer2(self, _cmd) : NO;
-}
+%end
 
-// Só hooka se a assinatura ObjC bater exatamente (BOOL, aridade certa).
-static BOOL YTABCEncMatches(Class cls, SEL sel, const char *enc) {
-    Method mth = cls ? class_getInstanceMethod(cls, sel) : NULL;
-    const char *actual = mth ? method_getTypeEncoding(mth) : NULL;
-    return actual && enc && strcmp(actual, enc) == 0;
-}
-static void YTABCHookBoolVoid(Class cls, const char *name, IMP rep, IMP *orig) {
-    if (!cls || !name || !rep || !orig || *orig) return;
-    SEL sel = sel_registerName(name);
-    if (!YTABCEncMatches(cls, sel, "B16@0:8") && !YTABCEncMatches(cls, sel, "c16@0:8")) return;
-    MSHookMessageEx(cls, sel, rep, orig);
-}
-static void YTABCHookBoolObj(Class cls, const char *name, IMP rep, IMP *orig) {
-    if (!cls || !name || !rep || !orig || *orig) return;
-    SEL sel = sel_registerName(name);
-    if (!YTABCEncMatches(cls, sel, "B24@0:8@16") && !YTABCEncMatches(cls, sel, "c24@0:8@16")) return;
-    MSHookMessageEx(cls, sel, rep, orig);
-}
+%end // YTABCInternalGates
 
-// Idempotente. Chamável do launch (Tweak.x) e do toggle (aplica ao vivo pras
-// classes já carregadas; o resto pega no próximo launch).
+// Instala o grupo uma vez. Chamado do launch (Tweak.x, gated por pref) e do
+// toggle das settings. O Phenotype é framework core (carregado antes do
+// didFinishLaunching), então objc_getClass resolve no %init.
 void YTABCInstallInternalIdentityHooks(void) {
-    Class pht = objc_getClass("PHTHeterodyneSyncer");
-    YTABCHookBoolObj(pht,  "isGooglerAccount:",           (IMP)ytabc_isGooglerAccount,  (IMP *)&orig_isGooglerAccount);
-    YTABCHookBoolVoid(pht, "hasGooglerAccount",           (IMP)ytabc_hasGooglerAccount, (IMP *)&orig_hasGooglerAccount);
-    YTABCHookBoolVoid(pht, "isInternalHeterodyneSyncer",  (IMP)ytabc_isInternalSyncer,  (IMP *)&orig_isInternalSyncer);
-    YTABCHookBoolVoid(objc_getClass("PHTInternalHeterodyneSyncer"),
-                      "isInternalHeterodyneSyncer",       (IMP)ytabc_isInternalSyncer2, (IMP *)&orig_isInternalSyncer2);
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        %init(YTABCInternalGates);
+    });
 }
