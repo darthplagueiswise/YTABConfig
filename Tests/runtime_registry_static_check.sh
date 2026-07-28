@@ -121,12 +121,12 @@ if [[ -z "$global_line" || -z "$hot_line" || -z "$search_line" || -z "$orig_line
     exit 1
 fi
 
-
 # RyukGram-style runtime patch browser. Full class/method discovery is on demand;
 # launch restores only explicitly persisted Class#selector keys.
-require_text Makefile "YTABRuntimeBrowser.m YTABRuntimeBrowserHooks.x YTABRuntimeBrowserEntry.x"
-require_text YTABRuntimeBrowserEntry.x '#import "YTABRuntimeBrowser.h"'
+require_text Makefile "YTABRuntimeBrowser.m YTABRuntimeBrowserModern.m YTABRuntimeBrowserHooks.x YTABRuntimeBrowserEntry.x"
+require_text YTABRuntimeBrowserEntry.x '#import "YTABRuntimeBrowserModern.h"'
 require_text YTABRuntimeBrowserEntry.x "Open Runtime Patch Browser"
+require_text YTABRuntimeBrowserEntry.x "YTABRuntimeBrowserModernViewController"
 require_text YTABRuntimeBrowserEntry.x "YTABRuntimeBrowserPersistedOverrideCount()"
 require_text YTABRuntimeBrowserEntry.x "YTABCFeatureLabCategory = 404"
 require_text YTABRuntimeBrowserEntry.x '@"YTABC_FEATURE_LAB"'
@@ -145,8 +145,6 @@ require_text YTABRuntimeBrowser.m "YTABRuntimeArgumentKindObject"
 require_text YTABRuntimeBrowser.m "YTABRuntimeArgumentKindInteger"
 require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeYouTube"
 require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeModule"
-require_text YTABRuntimeBrowser.m "Force OFF"
-require_text YTABRuntimeBrowser.m "Force ON"
 require_text YTABRuntimeBrowser.m '@"YTGlobalConfig", @"YTColdConfig", @"YTHotConfig"'
 require_text YTABRuntimeBrowserHooks.x "YTABRuntimeBrowserReinstallPersistedHooks();"
 reject_text YTABRuntimeBrowser.m "MSHookFunction"
@@ -154,6 +152,19 @@ reject_text YTABRuntimeBrowser.m "_dyld_register_func_for_add_image"
 reject_text YTABRuntimeBrowserHooks.x "objc_copyClassList"
 reject_text YTABRuntimeBrowserHooks.x "class_copyMethodList"
 reject_text YTABRuntimeBrowserHooks.x "MSHookMessageEx"
+
+# The visible browser must remain readable and use standard UIKit surfaces:
+# inline title, stacked top search, multiline labels, and direct tri-state
+# controls in every row. Patching must not be hidden in an action sheet.
+require_text YTABRuntimeBrowserModern.m "UINavigationItemLargeTitleDisplayModeNever"
+require_text YTABRuntimeBrowserModern.m "UINavigationItemSearchBarPlacementStacked"
+require_text YTABRuntimeBrowserModern.m 'setSearchBarPlacementAllowsToolbarIntegration:'
+require_text YTABRuntimeBrowserModern.m "UITableViewAutomaticDimension"
+require_text YTABRuntimeBrowserModern.m "NSLineBreakByCharWrapping"
+require_text YTABRuntimeBrowserModern.m 'initWithItems:@[@"System", @"Force OFF", @"Force ON"]'
+require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserReinstallPersistedHooks();"
+require_text YTABRuntimeBrowserModern.m "already installed wrapper remains pass-through until restart"
+reject_text YTABRuntimeBrowserModern.m "UIAlertControllerStyleActionSheet"
 
 browser_retry_count="$(grep -Fc 'YTABRuntimeBrowserReinstallPersistedHooks();' YTABRuntimeBrowserHooks.x)"
 if [[ "$browser_retry_count" -ne 2 ]]; then
