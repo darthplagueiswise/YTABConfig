@@ -146,7 +146,13 @@ jobs:
         if: env.BUILD_ROOTLESS == 'true'
         run: |
           cd main
-          ./build.sh rootless
+          set +e
+          ./build.sh rootless 2>&1 | tee "$RUNNER_TEMP/ytab-rootless-build.log"
+          BUILD_STATUS=${PIPESTATUS[0]}
+          set -e
+          if [ "$BUILD_STATUS" -ne 0 ]; then
+            exit "$BUILD_STATUS"
+          fi
           DEB="$(ls -t packages/*-rootless.deb packages/*.deb 2>/dev/null | head -n1)"
           test -n "$DEB"
           cp "$DEB" "packages/YTABConfig_${VERSION}_rootless.deb"
@@ -164,6 +170,14 @@ jobs:
           THEOS: ${{ github.workspace }}/theos
           THEOS_PLATFORM_DEB_COMPRESSION_TYPE: lzma
           THEOS_PLATFORM_DEB_COMPRESSION_LEVEL: 9
+
+      - name: Upload failed rootless build log
+        if: failure() && env.BUILD_ROOTLESS == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: YTABConfig_rootless_failure_log
+          path: ${{ runner.temp }}/ytab-rootless-build.log
+          if-no-files-found: error
 
       - name: Build standalone YTABConfig.dylib
         if: env.BUILD_DYLIB == 'true'
