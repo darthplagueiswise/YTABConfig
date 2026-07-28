@@ -29,6 +29,8 @@ static NSString * const FullKeyFormatString = @"%@.%@.%@";
 
 NSUserDefaults *defaults;
 extern NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *cache;
+extern BOOL YTABCPushNativeExperiments(id settingsViewController);
+extern BOOL YTABCPresentNativeExperiments(id settingsViewController);
 NSSet<NSString *> *allKeysSet;
 BOOL allKeysNeedsUpdate = YES;
 pthread_mutex_t cacheMutex;
@@ -276,6 +278,36 @@ BOOL YTABResetAllRuntimeOverrides(
                 return YES;
             }];
         [sectionItems addObject:featureLab];
+
+        // Duas versões pra testar (ambas instanciam via initWithParentResponder:;
+        // diferem só na apresentação). Ver YTNativeExperiments.x.
+        // V1 — push na própria nav do settings (jeito nativo do YT).
+        YTSettingsSectionItem *nativeExpPush = [YTSettingsSectionItemClass itemWithTitle:@"Open native experiments (push)"
+            titleDescription:@"Force-open via pushViewController: on the settings nav (orphaned VC, server-driven)"
+            accessibilityIdentifier:@"YTABC_NATIVE_EXPERIMENTS_PUSH"
+            detailTextBlock:nil
+            selectBlock:^BOOL (YTSettingsCell *cell, NSUInteger arg1) {
+                if (!settingsViewController) {
+                    NSLog(@"[YTABConfig Settings] Cannot open native experiments without a settings delegate");
+                    return NO;
+                }
+                return YTABCPushNativeExperiments(settingsViewController);
+            }];
+        [sectionItems addObject:nativeExpPush];
+
+        // V2 — modal numa nav nova com botão Done (estilo FBTweak).
+        YTSettingsSectionItem *nativeExpModal = [YTSettingsSectionItemClass itemWithTitle:@"Open native experiments (modal / FBTweak)"
+            titleDescription:@"Force-open modally in a fresh nav with a Done button (FBTweak opener style)"
+            accessibilityIdentifier:@"YTABC_NATIVE_EXPERIMENTS_MODAL"
+            detailTextBlock:nil
+            selectBlock:^BOOL (YTSettingsCell *cell, NSUInteger arg1) {
+                if (!settingsViewController) {
+                    NSLog(@"[YTABConfig Settings] Cannot open native experiments without a settings delegate");
+                    return NO;
+                }
+                return YTABCPresentNativeExperiments(settingsViewController);
+            }];
+        [sectionItems addObject:nativeExpModal];
     }
 
     YTSettingsSectionItem *thread = [YTSettingsSectionItemClass itemWithTitle:LOC(@"OPEN_MEGATHREAD")
