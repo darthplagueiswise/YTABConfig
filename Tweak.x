@@ -10,6 +10,7 @@ extern pthread_mutex_t cacheMutex;
 NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *cache;
 
 extern void SearchHook(void);
+extern void YTABCInstallInternalIdentityHooks(void);
 extern BOOL tweakEnabled(void);
 extern BOOL groupedSettings(void);
 extern void updateAllKeys(void);
@@ -108,6 +109,11 @@ static void hookClass(NSObject *instance) {
         hookClass(globalConfig);
         hookClass(coldConfig);
         hookClass(hotConfig);
+
+        // Flip client-side Googler/internal gates (Phenotype) if enabled.
+        if ([[NSUserDefaults standardUserDefaults] boolForKey:@"YTABCInternalIdentity"]) {
+            YTABCInstallInternalIdentityHooks();
+        }
 
         if (!groupedSettings()) SearchHook();
     }

@@ -31,6 +31,7 @@ NSUserDefaults *defaults;
 extern NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *cache;
 extern BOOL YTABCPushNativeExperiments(id settingsViewController);
 extern BOOL YTABCPresentNativeExperiments(id settingsViewController);
+extern void YTABCInstallInternalIdentityHooks(void);
 NSSet<NSString *> *allKeysSet;
 BOOL allKeysNeedsUpdate = YES;
 pthread_mutex_t cacheMutex;
@@ -308,6 +309,20 @@ BOOL YTABResetAllRuntimeOverrides(
                 return YTABCPresentNativeExperiments(settingsViewController);
             }];
         [sectionItems addObject:nativeExpModal];
+
+        // Flip client-side Googler/internal identity gates (Phenotype).
+        // Aplica ao vivo pras classes já carregadas; resto no próximo launch.
+        YTSettingsSectionItem *internalIdentity = [YTSettingsSectionItemClass switchItemWithTitle:@"Internal identity (Googler/dogfood)"
+            titleDescription:@"Force client-side Phenotype Googler/internal gates to YES. Unlocks client-gated internal behavior. Server-driven screens (e.g. Search Experiments) still authorize by the real account. Restart recommended."
+            accessibilityIdentifier:nil
+            switchOn:[defaults boolForKey:@"YTABCInternalIdentity"]
+            switchBlock:^BOOL (YTSettingsCell *cell, BOOL enabled) {
+                [defaults setBool:enabled forKey:@"YTABCInternalIdentity"];
+                if (enabled) YTABCInstallInternalIdentityHooks();
+                return YES;
+            }
+            settingItemId:0];
+        [sectionItems addObject:internalIdentity];
     }
 
     YTSettingsSectionItem *thread = [YTSettingsSectionItemClass itemWithTitle:LOC(@"OPEN_MEGATHREAD")
