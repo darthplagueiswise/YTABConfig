@@ -1,4 +1,4 @@
-#import "YTABRuntimeBrowser.h"
+#import "YTABRuntimeBrowserModern.h"
 #import <YouTubeHeader/YTSettingsSectionItem.h>
 #import <YouTubeHeader/YTSettingsSectionItemManager.h>
 #import <YouTubeHeader/YTSettingsViewController.h>
@@ -35,7 +35,7 @@ static NSMutableArray<YTSettingsSectionItem *> *YTABItemsByAddingRuntimeBrowser(
     YTSettingsSectionItem *open = [%c(YTSettingsSectionItem)
         itemWithTitle:@"Open Runtime Patch Browser"
         titleDescription:[NSString stringWithFormat:
-            @"Patch BOOL methods from YouTube and Module_Framework · %lu saved",
+            @"Readable live BOOL patches · %lu saved",
             (unsigned long)YTABRuntimeBrowserPersistedOverrideCount()]
         accessibilityIdentifier:@"YTABC_RUNTIME_PATCH_BROWSER"
         detailTextBlock:nil
@@ -48,8 +48,8 @@ static NSMutableArray<YTSettingsSectionItem *> *YTABItemsByAddingRuntimeBrowser(
                 NSLog(@"[YTABConfig RuntimeBrowser] settings controller unavailable");
                 return NO;
             }
-            YTABRuntimeBrowserViewController *browser =
-                [YTABRuntimeBrowserViewController new];
+            YTABRuntimeBrowserModernViewController *browser =
+                [YTABRuntimeBrowserModernViewController new];
             [settingsViewController pushViewController:browser];
             return YES;
         }];
