@@ -146,7 +146,7 @@ static UITableViewCell *YTABModernEngineCell(id controller,
     stack.axis = UILayoutConstraintAxisVertical;
     stack.spacing = 5.0;
     stack.translatesAutoresizingMaskIntoConstraints = NO;
-    stack.isLayoutMarginsRelativeArrangement = YES;
+    stack.layoutMarginsRelativeArrangement = YES;
     stack.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(11.0, 16.0, 11.0, 16.0);
     [self.contentView addSubview:stack];
 
