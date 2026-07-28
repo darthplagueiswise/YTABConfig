@@ -121,4 +121,37 @@ if [[ -z "$global_line" || -z "$hot_line" || -z "$search_line" || -z "$orig_line
     exit 1
 fi
 
+# RyukGram-style runtime patch browser. Full class/method discovery is on demand;
+# launch restores only explicitly persisted Class#selector keys.
+require_text Makefile "YTABRuntimeBrowser.m YTABRuntimeBrowserHooks.x YTABRuntimeBrowserEntry.x"
+require_text YTABRuntimeBrowserEntry.x '#import "YTABRuntimeBrowser.h"'
+require_text YTABRuntimeBrowserEntry.x "Open Runtime Patch Browser"
+require_text YTABRuntimeBrowserEntry.x "YTABRuntimeBrowserPersistedOverrideCount()"
+require_text YTABRuntimeBrowserEntry.x "YTABRuntimeBrowserCategory = 405"
+require_text YTABRuntimeBrowser.m "objc_copyClassList(&classCount)"
+require_text YTABRuntimeBrowser.m "class_getImageName(cls)"
+require_text YTABRuntimeBrowser.m "class_copyMethodList(owner, &methodCount)"
+require_text YTABRuntimeBrowser.m "imp_implementationWithBlock"
+require_text YTABRuntimeBrowser.m "MSHookMessageEx(hookClass, selector, replacement, &original);"
+require_text YTABRuntimeBrowser.m "YTABCRuntimeBrowserOverrides"
+require_text YTABRuntimeBrowser.m "YTABRuntimeArgumentKindObject"
+require_text YTABRuntimeBrowser.m "YTABRuntimeArgumentKindInteger"
+require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeYouTube"
+require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeModule"
+require_text YTABRuntimeBrowser.m "Force OFF"
+require_text YTABRuntimeBrowser.m "Force ON"
+require_text YTABRuntimeBrowser.m '@"YTGlobalConfig", @"YTColdConfig", @"YTHotConfig"'
+require_text YTABRuntimeBrowserHooks.x "YTABRuntimeBrowserReinstallPersistedHooks();"
+reject_text YTABRuntimeBrowser.m "MSHookFunction"
+reject_text YTABRuntimeBrowser.m "_dyld_register_func_for_add_image"
+reject_text YTABRuntimeBrowserHooks.x "objc_copyClassList"
+reject_text YTABRuntimeBrowserHooks.x "class_copyMethodList"
+reject_text YTABRuntimeBrowserHooks.x "MSHookMessageEx"
+
+browser_retry_count="$(grep -Fc 'YTABRuntimeBrowserReinstallPersistedHooks();' YTABRuntimeBrowserHooks.x)"
+if [[ "$browser_retry_count" -ne 2 ]]; then
+    echo "expected persisted restore plus one bounded retry, found $browser_retry_count" >&2
+    exit 1
+fi
+
 echo "runtime registry static checks passed"
