@@ -70,7 +70,7 @@ static const NSInteger YTABRuntimeBrowserCategory = 405;
             return YES;
         }];
 
-    NSArray *items = @[open];
+    NSMutableArray<YTSettingsSectionItem *> *items = [NSMutableArray arrayWithObject:open];
     NSString *title = @"Runtime Patches";
     if ([dataDelegate respondsToSelector:
          @selector(setSectionItems:forCategory:title:titleDescription:headerHidden:)]) {
