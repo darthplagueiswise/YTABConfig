@@ -9,6 +9,10 @@ being presented as a promise.
 
 - Runs inside the iOS YouTube app; YouTube 16.29.4 and newer are the supported
   baseline.
+- Raw Lab enumerates the three live Objective-C config classes from the
+  installed YouTube build through the same cache-backed method hooks used by
+  PoomSmart 1.9.2. Runtime behavior is not gated by a catalog version or by
+  hard-coded expected counts.
 - Uses the established `com.ps.ytabconfig` package identity and existing
   `YTABC` preferences, so this 2.0.0 fork release upgrades without discarding
   existing choices.
@@ -18,23 +22,128 @@ being presented as a promise.
   Discussions](https://github.com/afterglow-labs/YTABConfig/discussions), and
   report defects through [GitHub Issues](https://github.com/afterglow-labs/YTABConfig/issues).
 
+## Live runtime workflow
+
+Launch behavior deliberately stays compatible with PoomSmart 1.9.2: the tweak
+enumerates the current `YTGlobalConfig`, `YTColdConfig`, and `YTHotConfig`
+instances, invokes each supported native BOOL getter once, stores that value in
+the shared cache, and calls `MSHookMessageEx(..., NULL)` before YouTube's
+original app-delegate implementation. It does not retain original IMPs or
+install a parallel registry. The master switch remains default-off, matching
+PoomSmart; an existing `EnabledYTABC` preference is preserved.
+
+Feature Lab is a query layer over that same live cache and hook set. It never
+installs a second registry of hooks. Opening Raw Lab reads the current selector
+set from the running app. Visible rows and reports read the native value captured
+immediately before the hook; they never call the original getter again.
+
+The YouTube 21.30.5 arm64 binary was audited as a compatibility fixture. The
+three config classes are in the main executable (there is no
+`Module_Framework.framework`) and expose 9,449 raw BOOL method-list entries.
+The lists contain 147 duplicate entries across 142 selector names. Matching
+PoomSmart's selector deduplication gives 9,302 unique BOOL getters before the
+existing platform-prefix exclusions, or 6,093 Raw Lab flags after them. These
+figures are diagnostic evidence only; they are never compiled into the runtime.
+
+Both the rootless deb and sideload variants compile with the rootless Mach-O
+scheme, but their final install names intentionally differ. The deb keeps the
+rootless `@rpath/YTABConfig.dylib` identity. Sideload artifacts use explicit
+`@executable_path` identities that must match where the injector copies the
+file.
+
+## Native employee / experiments tests
+
+The native experiments UI and the client-side employee signals are separate
+pipelines. The tweak therefore exposes independent switches instead of one
+combined “employee mode”:
+
+- `PHTHeterodyneSyncer.isGooglerAccount:`
+- `PHTHeterodyneSyncer.hasGooglerAccount`
+- the `EXHClientProperties.isMaybeGooglerGmscore` request bit
+- the standard syncer’s `isInternalHeterodyneSyncer` result (diagnostic only)
+- Phenotype request/sync tracing and an optional one-shot resync
+- individual InnerTube traces for search `51`, opt-in `49`, and opt-out `50`
+- individual local `verifyActiveIdentity` bypasses for those same services
+
+All Objective-C hooks are installed once with exact 21.30.5 type-encoding
+checks. Their replacements read their own preference at call time, so changing a
+test switch is live and does not install or remove methods. No function inline
+hooks, dyld image callbacks, or class sweeps are used. `MSHookMessageEx` is used
+only for ABI-compatible Objective-C messages.
+
+Phenotype resync never constructs a `PHTInternalHeterodyneSyncer` and never
+passes a guessed server object. The tweak captures the real
+`PHTHeterodyneSyncerProtocol` object when YouTube enters
+`syncExperimentsWithServerInternal:syncAfterConfiguration:callback:` and reuses
+that exact object for the manual or optional one-shot resync. Until a native
+sync has supplied it, the resync action reports unavailable.
+
+InnerTube bypass tests affect only the client-side active-identity comparison
+for a request already tagged as service 49, 50, or 51. They do not create an
+account, dogfood token, auth token, server entitlement, or employee allowlist.
+The separate trace switches log the native request, identity-check state,
+response class, or NSError so device testing can distinguish a local identity
+mismatch from server rejection.
+
+## Sideload packaging
+
+For Feather, use `YTABConfig_2.0.0_feather.deb` with the default
+`@executable_path` + `Frameworks` injection options. Its archive uses
+`data.tar.xz`, its rootless paths are recognized by Feather's deb importer, and
+the contained dylib identifies itself as
+`@executable_path/Frameworks/YTABConfig.dylib`. Feather copies `YTABC.bundle`
+from Application Support to the app root.
+
+Start from an IPA that does not already contain YTABConfig. Feather's current
+`moveFileIfNeeded` implementation leaves an existing destination untouched, so
+injecting this deb into an IPA that already has
+`YouTube.app/Frameworks/YTABConfig.dylib` can preserve the old dylib even though
+the new deb was selected. The supplied black-screen fixture had both that old
+file and an existing
+`@executable_path/Frameworks/YTABConfig.dylib` load command. Reusing it as the
+input therefore does not test this build. Use a clean copy of the same YouTube
+version, then add only `YTABConfig_2.0.0_feather.deb`; do not also add the
+rootless deb, standalone injector, or an older YTABConfig dylib.
+
+The recommended layout ZIP is ready to unpack into `YouTube.app/`:
+
+- `Frameworks/YTABConfig.dylib` identifies itself as
+  `@executable_path/Frameworks/YTABConfig.dylib`.
+- `YTABC.bundle` remains at the root of `YouTube.app/`.
+- Substrate loads through
+  `@rpath/CydiaSubstrate.framework/CydiaSubstrate`, which resolves through
+  YouTube's existing `@executable_path/Frameworks` rpath.
+
+The separate `_injector.dylib` is for tools that accept one dylib and always
+copy it to the root of `YouTube.app/`. Its identity is
+`@executable_path/YTABConfig.dylib`; copy `YTABC.bundle` separately.
+
+Do not combine an `@rpath/YTABConfig.dylib` load command with a
+root-level `YouTube.app/YTABConfig.dylib` unless the executable also has an
+`@executable_path` rpath. For the Feather artifact, the only supported pairing
+is `YouTube.app/Frameworks/YTABConfig.dylib` with
+`@executable_path/Frameworks/YTABConfig.dylib`.
+
 ## Catalog workflow
 
 Raw Lab discovers the live flag list at runtime. The committed catalog contains
 only reviewed metadata; full decompile catalogs are generated on demand and are
-not shipped in the tweak.
+not shipped in the tweak. A catalog is loaded only when its `youtubeVersion`
+matches the installed app. The embedded reviewed seed now targets 21.30.5 and
+is opened only after the user selects **Open Feature Lab**; it is not read while
+YouTube launches.
 
 ```bash
 python3 tools/catalog_extractor.py "/path/to/YouTube (YT)" \
-  --youtube-version 21.28.3 \
-  --generated-at 2026-07-25T00:00:00Z \
-  --curated catalog/curated/youtube-21.28.3.json \
-  --expected-count YTColdConfig=6351 \
-  --expected-count YTGlobalConfig=21 \
-  --expected-count YTHotConfig=2459 \
+  --youtube-version 21.30.5 \
+  --generated-at 2026-07-27T00:00:00Z \
+  --curated catalog/curated/youtube-21.30.5.json \
+  --expected-count YTColdConfig=6648 \
+  --expected-count YTGlobalConfig=24 \
+  --expected-count YTHotConfig=2630 \
   --include-callsites \
   --max-callsites 3 \
-  --output catalog/generated/youtube-21.28.3.json
+  --output catalog/generated/youtube-21.30.5.json
 
 Definition extraction reads only `YTGlobalConfig.c`, `YTColdConfig.c`, and
 `YTHotConfig.c`. It reports recognized headers, BOOL candidates, and extracted

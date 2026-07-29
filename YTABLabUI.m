@@ -1,10 +1,10 @@
 #import "YTABLabUI.h"
 #import "RuntimeFlagRegistry.h"
 
-extern NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *YTABCopyRuntimeValues(void);
+extern NSDictionary<NSString *, NSDictionary<NSString *, id> *> *YTABCopyRuntimeValues(void);
 extern NSDictionary<NSString *, NSNumber *> *YTABCopyOverrideValues(void);
 extern BOOL YTABResetRuntimeOverride(NSString *sourceClass, NSString *selector, BOOL nativeValue);
-extern BOOL YTABResetAllRuntimeOverrides(NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *nativeValues);
+extern BOOL YTABResetAllRuntimeOverrides(NSDictionary<NSString *, NSDictionary<NSString *, id> *> *nativeValues);
 
 #define YTAB_STRINGIFY_INNER(value) #value
 #define YTAB_STRINGIFY(value) YTAB_STRINGIFY_INNER(value)
@@ -161,7 +161,6 @@ static NSString *YTABReadableTitle(NSString *selector) {
 
 @interface YTABLegacyRuntimeAdapter ()
 @property(nonatomic, strong) id<YTABLabCatalogProviding> catalog;
-@property(nonatomic, copy) NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *nativeValues;
 @end
 
 @implementation YTABLegacyRuntimeAdapter
@@ -170,7 +169,6 @@ static NSString *YTABReadableTitle(NSString *selector) {
     self = [super init];
     if (self) {
         _catalog = catalog;
-        _nativeValues = [YTABCopyRuntimeValues() copy] ?: @{};
     }
     return self;
 }
@@ -201,7 +199,7 @@ static NSString *YTABReadableTitle(NSString *selector) {
 }
 
 - (NSArray<YTABLabFlag *> *)allFlags {
-    NSDictionary *runtime = self.nativeValues ?: @{};
+    NSDictionary *runtime = YTABCopyRuntimeValues() ?: @{};
     NSDictionary *overrides = YTABCopyOverrideValues() ?: @{};
     NSMutableArray<YTABLabFlag *> *flags = [NSMutableArray array];
     NSMutableSet<NSString *> *runtimeKeys = [NSMutableSet set];
@@ -213,10 +211,11 @@ static NSString *YTABReadableTitle(NSString *selector) {
         for (NSString *selector in selectors) {
             NSString *fullKey = [NSString stringWithFormat:@"%@.%@", sourceClass, selector];
             [runtimeKeys addObject:fullKey];
+            NSNumber *native = YTABValidOverrideNumber(methods[selector]);
             NSNumber *override = YTABValidOverrideNumber(overrides[[YTABPreferencePrefix stringByAppendingString:fullKey]]);
             [flags addObject:[self flagForSelector:selector
                                       sourceClass:sourceClass
-                                      nativeValue:methods[selector]
+                                      nativeValue:native
                                      overrideValue:override
                                           removed:NO]];
         }
@@ -258,22 +257,23 @@ static NSString *YTABReadableTitle(NSString *selector) {
 }
 
 - (BOOL)resetAllOverrides {
-    return YTABResetAllRuntimeOverrides(self.nativeValues ?: @{});
+    return YTABResetAllRuntimeOverrides(YTABCopyRuntimeValues() ?: @{});
 }
 
 - (YTABLabFlag *)refreshedFlagMatchingFlag:(YTABLabFlag *)flag {
     if (!flag) return nil;
-    NSNumber *native = self.nativeValues[flag.sourceClass][flag.rawSelector];
+    BOOL live = YTABCRuntimeHasFlag(flag.sourceClass, flag.rawSelector);
+    NSNumber *native = live ? YTABCNativeValue(flag.sourceClass, flag.rawSelector) : nil;
     NSString *preferenceKey = [YTABPreferencePrefix stringByAppendingFormat:@"%@.%@", flag.sourceClass, flag.rawSelector];
-    NSNumber *override = native
+    NSNumber *override = live
         ? YTABCOverrideValue(flag.sourceClass, flag.rawSelector)
         : YTABValidOverrideNumber(YTABCopyOverrideValues()[preferenceKey]);
-    if (!native && !override) return nil;
+    if (!live && !override) return nil;
     return [self flagForSelector:flag.rawSelector
                     sourceClass:flag.sourceClass
                     nativeValue:native
                    overrideValue:override
-                        removed:native == nil];
+                        removed:!live];
 }
 
 - (NSString *)exportText {
@@ -449,7 +449,7 @@ static NSString *YTABReadableTitle(NSString *selector) {
     for (NSString *key in pendingValues) {
         YTABLabFlag *flag = flagsByKey[key];
         BOOL value = pendingValues[key].boolValue;
-        if ((!flag.hasOverride && flag.nativeValue == value) ||
+        if ((!flag.hasOverride && flag.hasNativeValue && flag.nativeValue == value) ||
             (flag.hasOverride && flag.effectiveValue == value)) continue;
         if ([self setOverrideValue:value forFlag:flag]) imported++;
     }
@@ -595,7 +595,7 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
     static NSString *identifier = @"YTABLabFlagCell";
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:identifier];
     if (!cell) cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:identifier];
-    YTABLabFlag *flag = self.visibleFlags[indexPath.row];
+    YTABLabFlag *flag = YTABRefreshedFlag(self.provider, self.visibleFlags[indexPath.row]);
     cell.textLabel.text = flag.readableTitle;
     cell.textLabel.numberOfLines = 2;
     NSString *native = flag.hasNativeValue ? [NSString stringWithFormat:@"Native %@", YTABBooleanText(flag.nativeValue)] : @"Native unavailable";
