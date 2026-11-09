@@ -11,6 +11,7 @@
 #import "RuntimeFlagRegistry.h"
 #import "YTABCatalogProvider.h"
 #import "YTABLabUI.h"
+#import "YTABCNativeMenus.h"
 
 #define Prefix @"YTABC"
 #define EnabledKey @"EnabledYTABC"
@@ -347,6 +348,30 @@ BOOL YTABResetAllRuntimeOverrides(
                 return YTABCPresentNativeExperiments(settingsViewController);
             }];
         [sectionItems addObject:nativeExpModal];
+
+        // Native 21.43.5 debugger/experiments hub. Instantiation is always
+        // user-driven, and unavailable native controllers are diagnosed in UI.
+        YTSettingsSectionItem *nativeTools = [YTSettingsSectionItemClass
+            itemWithTitle:@"Open YouTube native tools"
+            titleDescription:@"Native studies, search, results, playback and editor debug; read-only Phenotype/QA inventory"
+            accessibilityIdentifier:@"YTABC_NATIVE_TOOLS_OPEN"
+            detailTextBlock:nil
+            selectBlock:^BOOL (YTSettingsCell *cell, NSUInteger argument) {
+                (void)cell;
+                (void)argument;
+                if (!settingsViewController) {
+                    NSLog(@"[YTABC NativeMenus] Settings responder unavailable");
+                    return NO;
+                }
+                BOOL opened = YTABCPushNativeMenuHub(settingsViewController);
+                if (!opened) {
+                    YTABCShowTestResult(settingsViewController,
+                        @"Native tools navigation", NO, @"",
+                        @"This build's settings navigator could not open the local native tools hub.");
+                }
+                return opened;
+            }];
+        [sectionItems addObject:nativeTools];
 
         [sectionItems addObject:YTABCTestHeadingItem(
             YTSettingsSectionItemClass, @"Phenotype / Googler tests",
