@@ -85,6 +85,37 @@ The separate trace switches log the native request, identity-check state,
 response class, or NSError so device testing can distinguish a local identity
 mismatch from server rejection.
 
+## Native YouTube menus (21.43.5 binary audit)
+
+The **Open YouTube native tools** row is now available inside the existing
+**Feature Lab** settings category. It is a local navigation hub, not a
+server-authorized employee/internal account mode.
+
+The hub exposes separate, guarded launchers for the native
+`YTSettingsExperimentsTopViewController` (existing push/modal openers),
+`YTSettingsExperimentsViewController` (search and tabs), and
+`YTSettingsExperimentsResultsViewController` (results). Each constructor is
+checked at runtime, receives the live settings `parentResponder`, and
+reports failures without trying arbitrary initializers. A results page may
+be empty unless the native experiment service has results available.
+
+It also observes YouTube's own playback debug overlay when the player
+installs its gesture recognizer. The toggle controls that *existing* object;
+it does **not** create a fake player or assume the two-finger gesture was
+activated. The creation timeline debug console can be toggled explicitly
+when its native shared instance and selector are present.
+
+Watch/Lens debug providers, Phenotype, Developer/QA and YouTube configuration
+components are shown as **read-only class inventories**. They are not
+represented as launchable UIViewControllers without verified constructors.
+No hooks in this new module bypass authentication, change Googler status,
+request experiment opt-in/opt-out, or write Phenotype snapshots.
+
+The menu module was audited against the provided YouTube 21.43.5 IPA.
+Its iOS build/runtime behavior still requires compilation and device
+validation. Theos files: `YTABCNativeMenus.m`, `YTABCNativeMenus.h`,
+`Settings.x`, `Tweak.x`, and `Makefile`.
+
 ## Sideload packaging
 
 For Feather, use `YTABConfig_2.0.0_feather.deb` with the default
