@@ -61,8 +61,10 @@ static NSMutableArray<NSString *> *getBooleanMethods(Class targetClass) {
 
 static void hookClass(NSObject *instance) {
     if (!instance) {
-        [NSException raise:@"hookClass Invalid argument exception"
-                    format:@"Hooking the class of a non-existing instance"];
+        // Config objects are not guaranteed to be initialized when a sideload
+        // build reaches didFinishLaunching. Never crash during app launch.
+        NSLog(@"[YTABConfig Runtime] Skipping an unavailable native config instance");
+        return;
     }
 
     Class instanceClass = [instance class];
