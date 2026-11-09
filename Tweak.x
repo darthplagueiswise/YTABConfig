@@ -84,10 +84,7 @@ static void hookClass(NSObject *instance) {
 %hook YTAppDelegate
 
 - (BOOL)application:(id)application didFinishLaunchingWithOptions:(id)options {
-    // Install the verified Objective-C hooks before YouTube starts Phenotype or
-    // InnerTube work. Replacements are no-ops unless their individual switches
-    // are enabled, and the installer is idempotent.
-    YTABCInstallEmployeeExperimentHooks();
+    // Observe native UI components without modifying account eligibility.
     YTABCInstallNativeMenuObservationHooks();
 
     if (tweakEnabled()) {
@@ -131,10 +128,7 @@ static void hookClass(NSObject *instance) {
         [[NSBundle bundleWithPath:modulePath] load];
     }
 
-    // Main-executable Objective-C classes are registered before image
-    // constructors. Install once here, then retry idempotently at the start of
-    // didFinishLaunching in case a future build moves a target to a later image.
-    YTABCInstallEmployeeExperimentHooks();
+    // Attempt registration here and again during the app delegate launch.
     YTABCInstallNativeMenuObservationHooks();
 
     cache = [NSMutableDictionary new];
