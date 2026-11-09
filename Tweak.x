@@ -11,7 +11,6 @@ extern pthread_mutex_t cacheMutex;
 NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *cache;
 
 extern void SearchHook(void);
-extern void YTABCInstallEmployeeExperimentHooks(void);
 extern BOOL tweakEnabled(void);
 extern BOOL groupedSettings(void);
 extern void updateAllKeys(void);
