@@ -3,6 +3,7 @@
 #import <YouTubeHeader/YTColdConfig.h>
 #import <YouTubeHeader/YTHotConfig.h>
 #import <substrate.h>
+#import "YTABCNativeMenus.h"
 #import <pthread.h>
 
 extern pthread_mutex_t cacheMutex;
@@ -87,6 +88,7 @@ static void hookClass(NSObject *instance) {
     // InnerTube work. Replacements are no-ops unless their individual switches
     // are enabled, and the installer is idempotent.
     YTABCInstallEmployeeExperimentHooks();
+    YTABCInstallNativeMenuObservationHooks();
 
     if (tweakEnabled()) {
         updateAllKeys();
@@ -133,6 +135,7 @@ static void hookClass(NSObject *instance) {
     // constructors. Install once here, then retry idempotently at the start of
     // didFinishLaunching in case a future build moves a target to a later image.
     YTABCInstallEmployeeExperimentHooks();
+    YTABCInstallNativeMenuObservationHooks();
 
     cache = [NSMutableDictionary new];
     excludedPrefixes = [NSSet setWithArray:@[
