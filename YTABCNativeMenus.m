@@ -8,6 +8,7 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <substrate.h>
+#import <stdlib.h>
 
 static __weak id sYTABCObservedPlaybackOverlay;
 static void (*sYTABCOriginalInstallGesture)(id, SEL);
@@ -180,7 +181,11 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
         cell.detailTextLabel.text =
             [NSString stringWithFormat:@"%@ — class absent in this build",
                                        entry[@"subtitle"]];
-        cell.textLabel.textColor = [UIColor secondaryLabelColor];
+        if (@available(iOS 13.0, *)) {
+            cell.textLabel.textColor = [UIColor secondaryLabelColor];
+        } else {
+            cell.textLabel.textColor = [UIColor grayColor];
+        }
     }
     return cell;
 }
@@ -239,8 +244,11 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
     id overlay = sYTABCObservedPlaybackOverlay;
     SEL read = NSSelectorFromString(@"debugOverlayVisible");
     SEL write = NSSelectorFromString(@"setDebugOverlayVisible:");
-    if (!overlay || ![overlay respondsToSelector:read] ||
-        ![overlay respondsToSelector:write]) {
+    Method getterMethod = overlay ? class_getInstanceMethod([overlay class], read) : NULL;
+    Method setterMethod = overlay ? class_getInstanceMethod([overlay class], write) : NULL;
+    if (!overlay || !getterMethod || !setterMethod ||
+        method_getNumberOfArguments(getterMethod) != 2 ||
+        method_getNumberOfArguments(setterMethod) != 3) {
         YTABCShowNotice(self, @"Playback overlay not active",
                         @"YouTube has not invoked installGestureRecognizer on a live "
                         @"YTPlaybackDebugOverlayController. Open a video first. "
@@ -262,7 +270,11 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
     Class cls = NSClassFromString(@"YTCreationTimelineDebugConsole");
     SEL shared = NSSelectorFromString(@"shared");
     SEL toggle = NSSelectorFromString(@"toggleDebugMode");
-    if (!cls || ![cls respondsToSelector:shared]) {
+    Method factory = cls ? class_getClassMethod(cls, shared) : NULL;
+    Method toggleMethod = cls ? class_getInstanceMethod(cls, toggle) : NULL;
+    if (!factory || !toggleMethod ||
+        method_getNumberOfArguments(factory) != 2 ||
+        method_getNumberOfArguments(toggleMethod) != 2) {
         YTABCShowNotice(self, @"Creation console unavailable",
                         @"No usable YTCreationTimelineDebugConsole.shared class method.");
         return;
