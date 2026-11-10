@@ -156,7 +156,7 @@ require_text YTABRuntimeBrowser.m "YTABCClearOverride(cls, selector)"
 require_text YTABRuntimeBrowser.m "YTABRuntimeBrowserOverrideValue(NSString *patchKey)"
 require_text YTABRuntimeBrowser.m "YTABRuntimeIsMainExecutableClass(cls)"
 require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserOverrideValue(patchKey)"
-require_text YTABRuntimeBrowserModern.m "original captured at launch"
+require_text YTABRuntimeBrowserModern.m "captured at launch"
 reject_text YTABRuntimeBrowser.m '@"YouTube", @"Frameworks", @"All"'
 reject_text YTABRuntimeBrowser.m "[imageName hasPrefix:frameworksRoot]"
 require_text YTABRuntimeBrowser.m '@"YTGlobalConfig", @"YTColdConfig", @"YTHotConfig"'
@@ -231,7 +231,12 @@ require_text YTABRuntimeBrowserModern.m "UIFontTextStyleSubheadline"
 require_text YTABRuntimeBrowserModern.m "UIFontTextStyleCaption2"
 reject_text YTABRuntimeBrowserModern.m "monospacedSystemFontOfSize:15.0"
 require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserReinstallPersistedHooks();"
-require_text YTABRuntimeBrowserModern.m "Flags = original BOOLs captured at startup"
+# The footer must not sit under the native bottom search bar on iOS 26/27.
+require_text YTABRuntimeBrowserModern.m "Native bottom-toolbar search can overlap long section footers."
+require_text YTABRuntimeBrowserModern.m "UINavigationItemSearchBarPlacementIntegratedButton"
+require_text YTABRuntimeBrowser.m "objc_copyClassNamesForImage"
+require_text YTABRuntimeBrowser.m "sYTABRuntimeMethodCatalog = complete"
+require_text YTABRuntimeBrowser.m "YTABRuntimeInventoryQueue()"
 reject_text YTABRuntimeBrowserModern.m "UIAlertControllerStyleActionSheet"
 
 browser_retry_count="$(grep -Fc 'YTABRuntimeBrowserReinstallPersistedHooks();' YTABRuntimeBrowserHooks.x)"
