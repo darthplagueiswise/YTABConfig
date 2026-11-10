@@ -33,6 +33,7 @@
 // arquivo.
 
 #import <UIKit/UIKit.h>
+extern void YTABCInstallNativeStudyControlsHooks(void);
 #import <objc/runtime.h>
 #import <string.h>
 
@@ -120,6 +121,9 @@ static UIViewController *YTABCMakeExperimentsVC(id settingsViewController) {
         NSLog(@"[YTABConfig NativeExp] constructor ABI mismatch");
         return nil;
     }
+
+    // Install study UI hooks on demand, never during cold start.
+    YTABCInstallNativeStudyControlsHooks();
 
     UIViewController *experimentsVC = nil;
     @try {
