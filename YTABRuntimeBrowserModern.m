@@ -180,7 +180,6 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 
 @interface YTABRuntimeBrowserModernViewController () <UISearchBarDelegate, UIContextMenuInteractionDelegate>
 @property(nonatomic, strong) UIView *scopeHeaderView;
-@property(nonatomic, strong) UILabel *scopeHeaderLabel;
 @property(nonatomic, strong) UISearchBar *pinnedSearchBar;
 @property(nonatomic) BOOL usesNativeSearchToolbar;
 @property(nonatomic) BOOL priorToolbarHidden;
@@ -270,20 +269,14 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     } @catch (__unused NSException *exception) {}
     [scope removeFromSuperview];
 
-    CGFloat headerHeight = self.usesNativeSearchToolbar ? 50.0 : 102.0;
+    CGFloat headerHeight = self.usesNativeSearchToolbar ? 46.0 : 98.0;
     UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, headerHeight)];
     header.backgroundColor = [UIColor clearColor];
     if (self.pinnedSearchBar) [header addSubview:self.pinnedSearchBar];
 
-    UILabel *sourceLabel = [UILabel new];
-    sourceLabel.text = @"VIEW";
-    sourceLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption2];
-    sourceLabel.textColor = [UIColor secondaryLabelColor];
-    sourceLabel.adjustsFontForContentSizeCategory = YES;
-    [header addSubview:sourceLabel];
+    // Avoid redundant 'VIEW' chrome; the segmented control communicates the scope.
     if (scope) [header addSubview:scope];
     self.scopeHeaderView = header;
-    self.scopeHeaderLabel = sourceLabel;
     // Do not set tableHeaderView: it would scroll the search out of sight.
     self.tableView.tableHeaderView = nil;
     // The iOS 26/27 floating glass search button is owned by YouTube's
@@ -354,16 +347,15 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     if (!header) return;
     CGFloat width = CGRectGetWidth(self.tableView.bounds);
     CGFloat searchHeight = self.usesNativeSearchToolbar ? 0.0 : 52.0;
-    header.frame = CGRectMake(0, 0, width, searchHeight + 50.0);
+    header.frame = CGRectMake(0, 0, width, searchHeight + 46.0);
     if (self.pinnedSearchBar)
         self.pinnedSearchBar.frame = CGRectMake(8, 0, MAX(0, width - 16), 52);
-    self.scopeHeaderLabel.frame = CGRectMake(20, searchHeight + 1, MAX(0, width - 40), 14);
     UISegmentedControl *scope = nil;
     @try {
         id value = [self valueForKey:@"scopeControl"];
         if ([value isKindOfClass:UISegmentedControl.class]) scope = value;
     } @catch (__unused NSException *exception) {}
-    scope.frame = CGRectMake(16, searchHeight + 15, MAX(0, width - 32), 31);
+    scope.frame = CGRectMake(16, searchHeight + 7, MAX(0, width - 32), 34);
 }
 
 - (NSString *)ytab_currentSearchText {
@@ -392,7 +384,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
     (void)tableView; (void)section;
-    return self.usesNativeSearchToolbar ? 50.0 : 102.0;
+    return self.usesNativeSearchToolbar ? 46.0 : 98.0;
 }
 
 - (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
