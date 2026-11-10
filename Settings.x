@@ -12,6 +12,10 @@
 #import "YTABCatalogProvider.h"
 #import "YTABLabUI.h"
 #import "YTABCNativeMenus.h"
+extern void YTABCInstallNativeDiagnostics(void);
+extern BOOL YTABCRunPhenotypeResync(void);
+extern BOOL YTABCClearNativeExperimentsCaches(void);
+extern NSDictionary<NSString *, id> *YTABCCopyNativeDiagnostics(void);
 
 #define Prefix @"YTABC"
 #define EnabledKey @"EnabledYTABC"
@@ -37,6 +41,22 @@ BOOL allKeysNeedsUpdate = YES;
 pthread_mutex_t cacheMutex;
 NSMutableDictionary<NSString *, NSString *> *keyCache;
 NSUInteger prefixLength;
+
+static YTSettingsSectionItem *YTABCDiagnosticsSwitch(
+    Class itemClass, NSString *title, NSString *detail, NSString *identifier, NSString *defaultsKey
+) {
+    return [(id)itemClass switchItemWithTitle:title
+        titleDescription:detail
+        accessibilityIdentifier:identifier
+        switchOn:[[NSUserDefaults standardUserDefaults] boolForKey:defaultsKey]
+        switchBlock:^BOOL (YTSettingsCell *cell, BOOL enabled) {
+            (void)cell;
+            [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:defaultsKey];
+            YTABCInstallNativeDiagnostics();
+            return YES;
+        }
+        settingItemId:0];
+}
 
 static void YTABCShowTestResult(UIViewController *presenter, NSString *title, BOOL success,
                                 NSString *successMessage, NSString *failureMessage) {
@@ -339,6 +359,79 @@ BOOL YTABResetAllRuntimeOverrides(
                 return opened;
             }];
         [sectionItems addObject:nativeTools];
+
+        // Restored concrete native diagnostics. No guessed Employee privileges:
+        // the real classification can be observed, but not fabricated.
+        [sectionItems addObject:YTABCDiagnosticsSwitch(YTSettingsSectionItemClass,
+            @"Trace native Phenotype sync and classification",
+            @"Observe genuine Googler/internal checks and Heterodyne sync events. No account or token overrides.",
+            @"YTABC_TRACE_NATIVE_PHENOTYPE", @"YTABCTracePhenotype")];
+        [sectionItems addObject:YTABCDiagnosticsSwitch(YTSettingsSectionItemClass,
+            @"Trace native experiment search",
+            @"Log InnerTube experiment search invocation without request bodies or auth data.",
+            @"YTABC_TRACE_NATIVE_SEARCH", @"YTABCTraceExperimentsSearch")];
+        [sectionItems addObject:YTABCDiagnosticsSwitch(YTSettingsSectionItemClass,
+            @"Trace native experiment opt-in",
+            @"Log genuine opt-in request invocation without altering the request.",
+            @"YTABC_TRACE_NATIVE_OPTIN", @"YTABCTraceExperimentsOptIn")];
+        [sectionItems addObject:YTABCDiagnosticsSwitch(YTSettingsSectionItemClass,
+            @"Trace native experiment opt-out",
+            @"Log genuine opt-out request invocation without altering the request.",
+            @"YTABC_TRACE_NATIVE_OPTOUT", @"YTABCTraceExperimentsOptOut")];
+
+        YTSettingsSectionItem *nativeStatus = [YTSettingsSectionItemClass
+            itemWithTitle:@"Native Phenotype / Experiments status"
+            titleDescription:@"Show observed native calls, hook count, and unchanged Googler classification"
+            accessibilityIdentifier:@"YTABC_NATIVE_DIAGNOSTIC_STATUS"
+            detailTextBlock:nil
+            selectBlock:^BOOL (YTSettingsCell *cell, NSUInteger argument) {
+                (void)cell; (void)argument;
+                NSDictionary *snapshot = YTABCCopyNativeDiagnostics();
+                NSArray *sortedKeys = [[snapshot allKeys] sortedArrayUsingSelector:@selector(compare:)];
+                NSMutableArray *lines = [NSMutableArray array];
+                for (NSString *key in sortedKeys)
+                    [lines addObject:[NSString stringWithFormat:@"%@ = %@", key, snapshot[key]]];
+                UIAlertController *alert = [UIAlertController
+                    alertControllerWithTitle:@"Native diagnostic state"
+                    message:[lines componentsJoinedByString:@"\n"]
+                    preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"OK"
+                    style:UIAlertActionStyleDefault handler:nil]];
+                [settingsViewController presentViewController:alert animated:YES completion:nil];
+                return YES;
+            }];
+        [sectionItems addObject:nativeStatus];
+
+        YTSettingsSectionItem *nativeResync = [YTSettingsSectionItemClass
+            itemWithTitle:@"Run native Phenotype resync"
+            titleDescription:@"Use only the actual syncer observed on the original Heterodyne path"
+            accessibilityIdentifier:@"YTABC_NATIVE_PHENOTYPE_RESYNC"
+            detailTextBlock:nil
+            selectBlock:^BOOL (YTSettingsCell *cell, NSUInteger argument) {
+                (void)cell; (void)argument;
+                BOOL issued = YTABCRunPhenotypeResync();
+                YTABCShowTestResult(settingsViewController, @"Native Phenotype resync", issued,
+                    @"Called syncWithCallback: on the observed native syncer. Server success is not implied.",
+                    @"No live native syncer was observed or its ABI does not match.");
+                return YES;
+            }];
+        [sectionItems addObject:nativeResync];
+
+        YTSettingsSectionItem *nativeClear = [YTSettingsSectionItemClass
+            itemWithTitle:@"Clear native experiment cache"
+            titleDescription:@"Call clearCaches on the observed YTExperimentsServiceImpl only"
+            accessibilityIdentifier:@"YTABC_NATIVE_EXPERIMENT_CACHE"
+            detailTextBlock:nil
+            selectBlock:^BOOL (YTSettingsCell *cell, NSUInteger argument) {
+                (void)cell; (void)argument;
+                BOOL issued = YTABCClearNativeExperimentsCaches();
+                YTABCShowTestResult(settingsViewController, @"Native experiments cache", issued,
+                    @"Called clearCaches on the observed native experiments service.",
+                    @"No native experiments service observed. Open Search Experiments first.");
+                return YES;
+            }];
+        [sectionItems addObject:nativeClear];
+
 
         // Phenotype/InnerTube test switches from an older draft were removed:
         // their declared callback implementations did not exist in this branch.
