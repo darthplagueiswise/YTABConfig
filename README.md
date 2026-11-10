@@ -86,6 +86,41 @@ The old incomplete `YTInternalIdentity.x` remains as uncompiled historical
 source; it must not be used to claim that an Employee mode exists. This is
 separate from exposing local debug UI controllers.
 
+## Native experiments empty screen / runtime UI corrections
+
+The extracted YouTube 21.43.5 ARM64 image confirms that
+`YTSettingsExperimentsViewController.initWithParentResponder:` takes a
+**single parent responder**, and internally creates the results page. The
+top-level experiment controller does **not** take a Googler or Heterodyne
+parameter. It is incorrect to initialize `ResultsViewController`
+independently or claim a specific account gate without runtime evidence.
+
+`YTABNativeExperimentsHealth.m` hooks the original view-controller lifecycle
+and observes `updateDataForTab:`, `makeSearchWithQuery:forTabIndex:`,
+and `YTSettingsExperimentsResultsViewController.addSectionsFromArray:`.
+**Why is native experiments blank?** now reports the availability of the
+native parent responder, the native tab controllers, whether search was
+invoked, and whether result sections were received. **Retry current native
+experiments tab** calls the app's original tab refresh method only for a
+valid existing selected tab. Neither action forges experiments, auth,
+service instances or a remote response. The exact cause of an empty result
+still requires runtime evidence (no request vs. error vs. empty response).
+
+Runtime Browser presentation now uses a plain UIKit table with a pinned
+native `UISearchBar`, a stable source control and native iOS navigation
+materials. It uses smaller system fonts and system segments. Patch mode
+changes call the native hook engine and are **not persisted if hook
+installation fails**. Rows distinguish `native` (last sampled),
+`effective` and actual `hook installed` state, explicitly showing
+`not sampled` when a getter has not executed. All modes retain the
+persisted `YTABCRuntimeBrowserOverrides` format. The Feature Lab list
+also retains its search bar on scroll, shows override modes, and disables
+unavailable switches rather than representing them as OFF.
+
+iOS 26/27 Liquid Glass comes from standard UIKit controls compiled with the
+modern SDK; the tweak must not fake it with custom blur/background layers.
+These static changes are **not** equivalent to verified on-device appearance.
+
 ## Native YouTube menus (21.43.5 binary audit)
 
 The **Open YouTube native tools** row is now available inside the existing
