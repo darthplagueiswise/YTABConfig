@@ -67,98 +67,94 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     }
 }
 
-static UITableViewCell *YTABModernEngineCell(id controller,
-                                             UITableView *tableView,
-                                             NSIndexPath *indexPath) {
-    Class modernClass = object_getClass(controller);
-    Class engineClass = class_getSuperclass(modernClass);
-    SEL selector = @selector(tableView:cellForRowAtIndexPath:);
-    Method method = engineClass ? class_getInstanceMethod(engineClass, selector) : NULL;
-    IMP implementation = method ? method_getImplementation(method) : NULL;
-    if (!implementation) return nil;
-    return ((UITableViewCell *(*)(id, SEL, UITableView *, NSIndexPath *))implementation)(
-        controller, selector, tableView, indexPath);
-}
 
 @interface YTABRuntimePatchCell : UITableViewCell
 @property(nonatomic, strong) UILabel *selectorLabel;
 @property(nonatomic, strong) UILabel *ownerLabel;
 @property(nonatomic, strong) UILabel *statusLabel;
-@property(nonatomic, strong) UILabel *encodingLabel;
-@property(nonatomic, strong) UISegmentedControl *modeControl;
+@property(nonatomic, strong) UISwitch *overrideSwitch;
+@property(nonatomic, strong) UIButton *modeButton;
 @end
 
 @implementation YTABRuntimePatchCell
-
-- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
-    self = [super initWithStyle:style reuseIdentifier:reuseIdentifier];
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)identifier {
+    self = [super initWithStyle:style reuseIdentifier:identifier];
     if (!self) return nil;
+    self.selectionStyle = UITableViewCellSelectionStyleDefault;
 
-    self.selectionStyle = UITableViewCellSelectionStyleNone;
-
+    // The selector is content, not a headline. Avoid fixed 15pt monospaced
+    // fonts and long technical type encodings in the primary row.
     _selectorLabel = [UILabel new];
-    _selectorLabel.numberOfLines = 0;
-    _selectorLabel.lineBreakMode = NSLineBreakByCharWrapping;
-    if (@available(iOS 13.0, *)) {
-        _selectorLabel.font = [UIFont monospacedSystemFontOfSize:13.0
-                                                        weight:UIFontWeightRegular];
-    } else {
-        _selectorLabel.font = [UIFont systemFontOfSize:13.0 weight:UIFontWeightRegular];
-    }
+    _selectorLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+    _selectorLabel.adjustsFontForContentSizeCategory = YES;
+    _selectorLabel.numberOfLines = 1;
+    _selectorLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    [_selectorLabel setContentCompressionResistancePriority:UILayoutPriorityDefaultLow
+                                                   forAxis:UILayoutConstraintAxisHorizontal];
 
     _ownerLabel = [UILabel new];
-    _ownerLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    _ownerLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
     _ownerLabel.textColor = UIColor.secondaryLabelColor;
-    _ownerLabel.numberOfLines = 2;
-    _ownerLabel.lineBreakMode = NSLineBreakByCharWrapping;
+    _ownerLabel.numberOfLines = 1;
+    _ownerLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    _ownerLabel.adjustsFontForContentSizeCategory = YES;
 
     _statusLabel = [UILabel new];
-    _statusLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    _statusLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption2];
     _statusLabel.textColor = UIColor.secondaryLabelColor;
-    _statusLabel.numberOfLines = 2;
-
-    _encodingLabel = [UILabel new];
-    if (@available(iOS 13.0, *)) {
-        _encodingLabel.font = [UIFont monospacedSystemFontOfSize:10.0
-                                                         weight:UIFontWeightRegular];
-    } else {
-        _encodingLabel.font = [UIFont systemFontOfSize:10.0];
-    }
-    _encodingLabel.textColor = UIColor.tertiaryLabelColor;
-    _encodingLabel.numberOfLines = 2;
-    _encodingLabel.lineBreakMode = NSLineBreakByCharWrapping;
-
-    _selectorLabel.adjustsFontForContentSizeCategory = YES;
-    _ownerLabel.adjustsFontForContentSizeCategory = YES;
+    _statusLabel.numberOfLines = 1;
+    _statusLabel.lineBreakMode = NSLineBreakByTruncatingTail;
     _statusLabel.adjustsFontForContentSizeCategory = YES;
-    _encodingLabel.adjustsFontForContentSizeCategory = YES;
+    [_statusLabel setContentCompressionResistancePriority:UILayoutPriorityDefaultLow
+                                                 forAxis:UILayoutConstraintAxisHorizontal];
 
-    _modeControl = [[UISegmentedControl alloc]
-        initWithItems:@[@"System", @"Force OFF", @"Force ON"]];
-    _modeControl.apportionsSegmentWidthsByContent = NO;
-    _modeControl.accessibilityLabel = @"Runtime patch mode";
+    _overrideSwitch = [UISwitch new];
+    _overrideSwitch.accessibilityLabel = @"Force this selector's result";
+    [_overrideSwitch setContentHuggingPriority:UILayoutPriorityRequired
+                                      forAxis:UILayoutConstraintAxisHorizontal];
+
+    _modeButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    if (@available(iOS 26.0, *))
+        _modeButton.configuration = [UIButtonConfiguration glassButtonConfiguration];
+    else if (@available(iOS 15.0, *))
+        _modeButton.configuration = [UIButtonConfiguration tintedButtonConfiguration];
+    _modeButton.showsMenuAsPrimaryAction = YES;
+    _modeButton.accessibilityLabel = @"Choose System, Force OFF or Force ON";
+    _modeButton.titleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
+    [_modeButton setContentHuggingPriority:UILayoutPriorityRequired
+                                  forAxis:UILayoutConstraintAxisHorizontal];
+
+    UIStackView *headline = [[UIStackView alloc] initWithArrangedSubviews:@[
+        _selectorLabel, _overrideSwitch
+    ]];
+    headline.axis = UILayoutConstraintAxisHorizontal;
+    headline.alignment = UIStackViewAlignmentCenter;
+    headline.spacing = 12.0;
+
+    UIStackView *stateRow = [[UIStackView alloc] initWithArrangedSubviews:@[
+        _statusLabel, _modeButton
+    ]];
+    stateRow.axis = UILayoutConstraintAxisHorizontal;
+    stateRow.alignment = UIStackViewAlignmentCenter;
+    stateRow.spacing = 8.0;
 
     UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        _selectorLabel, _ownerLabel, _statusLabel, _encodingLabel, _modeControl
+        headline, _ownerLabel, stateRow
     ]];
     stack.axis = UILayoutConstraintAxisVertical;
-    stack.spacing = 3.0;
+    stack.spacing = 4.0;
     stack.translatesAutoresizingMaskIntoConstraints = NO;
-    stack.layoutMarginsRelativeArrangement = YES;
-    stack.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(9.0, 16.0, 9.0, 16.0);
     [self.contentView addSubview:stack];
-
     [NSLayoutConstraint activateConstraints:@[
-        [stack.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor],
-        [stack.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor],
-        [stack.topAnchor constraintEqualToAnchor:self.contentView.topAnchor],
-        [stack.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor],
-        [_modeControl.heightAnchor constraintEqualToConstant:32.0],
+        [stack.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
+        [stack.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
+        [stack.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:9],
+        [stack.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-9],
+        [_overrideSwitch.widthAnchor constraintGreaterThanOrEqualToConstant:49],
+        [_modeButton.heightAnchor constraintGreaterThanOrEqualToConstant:30],
     ]];
-
     return self;
 }
-
 @end
 
 @interface YTABRuntimeBrowserModernViewController () <UISearchBarDelegate>
@@ -197,7 +193,7 @@ static UITableViewCell *YTABModernEngineCell(id controller,
     self.navigationItem.titleView = nil;
     self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
     self.tableView.rowHeight = UITableViewAutomaticDimension;
-    self.tableView.estimatedRowHeight = 104.0;
+    self.tableView.estimatedRowHeight = 86.0;
     self.tableView.separatorInset = UIEdgeInsetsMake(0, 16, 0, 16);
     self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
     self.definesPresentationContext = YES;
@@ -322,85 +318,133 @@ static UITableViewCell *YTABModernEngineCell(id controller,
 
 - (UITableViewCell *)tableView:(UITableView *)tableView
          cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    // Ask the engine's concrete implementation for its current native/state
-    // string without relying on a private method declaration in the header.
-    UITableViewCell *engineCell = YTABModernEngineCell(self, tableView, indexPath);
-
-    static NSString *identifier = @"YTABRuntimeModernPatchCell";
-    YTABRuntimePatchCell *cell =
-        [tableView dequeueReusableCellWithIdentifier:identifier];
-    if (!cell) {
+    static NSString *identifier = @"YTABRuntimeGlassPatchCell";
+    YTABRuntimePatchCell *cell = [tableView dequeueReusableCellWithIdentifier:identifier];
+    if (!cell)
         cell = [[YTABRuntimePatchCell alloc] initWithStyle:UITableViewCellStyleDefault
-                                          reuseIdentifier:identifier];
-    }
+                                           reuseIdentifier:identifier];
 
     id method = [self ytab_methodAtIndexPath:indexPath];
     NSString *selectorName = YTABModernStringValue(method, @"selectorName");
     NSString *className = YTABModernStringValue(method, @"className");
     NSString *imageName = YTABModernStringValue(method, @"imageName");
-    NSString *typeEncoding = YTABModernStringValue(method, @"typeEncoding");
-    NSString *patchKey = YTABModernStringValue(method, @"patchKey");
-    BOOL classMethod = YTABModernBoolValue(method, @"classMethod");
+    NSString *key = YTABModernStringValue(method, @"patchKey");
+    BOOL isClassMethod = YTABModernBoolValue(method, @"classMethod");
 
     cell.selectorLabel.text = [NSString stringWithFormat:@"%@ %@",
-                               classMethod ? @"+" : @"-", selectorName ?: @""];
+                               isClassMethod ? @"+" : @"-", selectorName];
     cell.ownerLabel.text = imageName.length
         ? [NSString stringWithFormat:@"%@ · %@", className, imageName]
         : className;
 
-    NSString *engineStatus = engineCell.detailTextLabel.text ?: @"";
-    NSNumber *nativeSample = YTABRuntimeBrowserNativeSample(patchKey);
-    NSNumber *savedOverride = YTABModernStoredOverrides()[patchKey];
-    BOOL installed = YTABRuntimeBrowserPatchInstalled(patchKey);
-    NSString *nativeText = nativeSample ? (nativeSample.boolValue ? @"ON" : @"OFF") : @"not sampled";
-    NSString *effectiveText = savedOverride
-        ? (installed ? (savedOverride.boolValue ? @"ON" : @"OFF") : @"pending / unavailable")
-        : nativeText;
-    cell.statusLabel.text = [NSString stringWithFormat:
-        @"Native: %@  ·  Effective: %@  ·  %@",
-        nativeText, effectiveText, savedOverride ? (installed ? @"Patch active" : @"Patch not installed") : @"System"];
-    cell.statusLabel.textColor = savedOverride && installed
-        ? [UIColor labelColor] : [UIColor secondaryLabelColor];
-    cell.encodingLabel.text = [NSString stringWithFormat:@"%@\n%@",
-                               typeEncoding ?: @"", patchKey ?: @""];
+    YTABModernPatchMode mode = YTABModernModeForKey(key);
+    NSNumber *native = YTABRuntimeBrowserNativeSample(key);
+    BOOL installed = YTABRuntimeBrowserPatchInstalled(key);
+    NSString *nativeText = native ? (native.boolValue ? @"ON" : @"OFF") : @"not sampled";
+    NSString *effectiveText = mode == YTABModernPatchModeSystem
+        ? nativeText
+        : (installed ? (mode == YTABModernPatchModeForceOn ? @"ON" : @"OFF")
+                     : @"pending");
+    cell.statusLabel.text = [NSString stringWithFormat:@"Native %@ · Effective %@",
+                             nativeText, effectiveText];
 
-    [cell.modeControl removeTarget:nil action:NULL forControlEvents:UIControlEventValueChanged];
-    cell.modeControl.selectedSegmentIndex = YTABModernModeForKey(patchKey);
-    objc_setAssociatedObject(cell.modeControl, YTABModernPatchKeyAssociation,
-                             patchKey, OBJC_ASSOCIATION_COPY_NONATOMIC);
-    [cell.modeControl addTarget:self
-                         action:@selector(patchModeChanged:)
-               forControlEvents:UIControlEventValueChanged];
+    [cell.overrideSwitch removeTarget:nil action:NULL forControlEvents:UIControlEventValueChanged];
+    BOOL effectiveBool = mode == YTABModernPatchModeSystem
+        ? (native ? native.boolValue : NO)
+        : mode == YTABModernPatchModeForceOn;
+    [cell.overrideSwitch setOn:effectiveBool animated:NO];
+    cell.overrideSwitch.accessibilityValue = [NSString stringWithFormat:
+        @"%@, current mode %@. Native %@",
+        effectiveText,
+        mode == YTABModernPatchModeSystem ? @"System"
+        : (mode == YTABModernPatchModeForceOn ? @"Force ON" : @"Force OFF"),
+        nativeText];
+    objc_setAssociatedObject(cell.overrideSwitch, YTABModernPatchKeyAssociation,
+                             key, OBJC_ASSOCIATION_COPY_NONATOMIC);
+    [cell.overrideSwitch addTarget:self action:@selector(overrideSwitchChanged:)
+                  forControlEvents:UIControlEventValueChanged];
 
-    cell.accessibilityLabel = selectorName;
-    cell.accessibilityValue = [NSString stringWithFormat:@"%@, %@",
-                               cell.ownerLabel.text ?: @"", engineStatus ?: @""];
+    NSString *modeLabel = mode == YTABModernPatchModeSystem ? @"System"
+        : (mode == YTABModernPatchModeForceOn ? @"Force ON" : @"Force OFF");
+    UIButtonConfiguration *configuration = cell.modeButton.configuration;
+    if (configuration) {
+        configuration.title = modeLabel;
+        configuration.contentInsets = NSDirectionalEdgeInsetsMake(2, 8, 2, 8);
+        cell.modeButton.configuration = configuration;
+    } else {
+        [cell.modeButton setTitle:modeLabel forState:UIControlStateNormal];
+    }
+    cell.modeButton.menu = [self ytab_modeMenuForKey:key];
+    cell.modeButton.accessibilityValue = modeLabel;
+    cell.accessibilityLabel = [NSString stringWithFormat:@"%@, %@, native %@",
+                               selectorName, modeLabel, nativeText];
+    cell.accessibilityHint = @"Tap for full Objective-C signature and patch key.";
     return cell;
 }
 
-- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-    [tableView deselectRowAtIndexPath:indexPath animated:NO];
+- (UIMenu *)ytab_modeMenuForKey:(NSString *)key {
+    __weak typeof(self) weakSelf = self;
+    YTABModernPatchMode current = YTABModernModeForKey(key);
+    NSMutableArray<UIMenuElement *> *actions = [NSMutableArray array];
+    NSArray<NSString *> *titles = @[@"System", @"Force OFF", @"Force ON"];
+    for (NSInteger index = 0; index < 3; index++) {
+        YTABModernPatchMode chosen = (YTABModernPatchMode)index;
+        UIAction *action = [UIAction actionWithTitle:titles[(NSUInteger)index]
+                                             image:nil
+                                        identifier:nil
+                                           handler:^(__unused UIAction *ignored) {
+            [weakSelf ytab_applyMode:chosen patchKey:key];
+        }];
+        action.state = chosen == current ? UIMenuElementStateOn : UIMenuElementStateOff;
+        [actions addObject:action];
+    }
+    return [UIMenu menuWithTitle:@"Runtime override" children:actions];
 }
 
-- (void)patchModeChanged:(UISegmentedControl *)sender {
-    NSString *patchKey = objc_getAssociatedObject(sender, YTABModernPatchKeyAssociation);
-    if (!patchKey.length) return;
-
-    YTABModernPatchMode requestedMode = (YTABModernPatchMode)sender.selectedSegmentIndex;
-    if (!YTABModernSetModeForKey(requestedMode, patchKey)) {
-        sender.selectedSegmentIndex = YTABModernModeForKey(patchKey);
+- (void)ytab_applyMode:(YTABModernPatchMode)mode patchKey:(NSString *)key {
+    if (!key.length) return;
+    if (!YTABModernSetModeForKey(mode, key)) {
         UIAlertController *error = [UIAlertController
             alertControllerWithTitle:@"Patch unavailable"
-            message:@"The selected method could not be hooked in this build. The saved setting was not changed."
+            message:@"The target method could not be hooked. The selected mode was not saved."
             preferredStyle:UIAlertControllerStyleAlert];
         [error addAction:[UIAlertAction actionWithTitle:@"OK"
-            style:UIAlertActionStyleDefault handler:nil]];
+                   style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:error animated:YES completion:nil];
+        [self.tableView reloadData];
         return;
     }
-    UISelectionFeedbackGenerator *feedback = [UISelectionFeedbackGenerator new];
-    [feedback selectionChanged];
+    [[[UISelectionFeedbackGenerator alloc] init] selectionChanged];
     [self.tableView reloadData];
+}
+
+- (void)overrideSwitchChanged:(UISwitch *)sender {
+    NSString *key = objc_getAssociatedObject(sender, YTABModernPatchKeyAssociation);
+    [self ytab_applyMode:sender.isOn ? YTABModernPatchModeForceOn
+                                : YTABModernPatchModeForceOff patchKey:key];
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    id method = [self ytab_methodAtIndexPath:indexPath];
+    NSString *name = YTABModernStringValue(method, @"selectorName");
+    NSString *owner = YTABModernStringValue(method, @"className");
+    NSString *encoding = YTABModernStringValue(method, @"typeEncoding");
+    NSString *key = YTABModernStringValue(method, @"patchKey");
+    NSNumber *native = YTABRuntimeBrowserNativeSample(key);
+    NSString *message = [NSString stringWithFormat:
+        @"Class: %@\nEncoding: %@\nPatch key: %@\nNative result: %@",
+        owner, encoding, key,
+        native ? (native.boolValue ? @"ON" : @"OFF") : @"not sampled"];
+    UIAlertController *details = [UIAlertController
+        alertControllerWithTitle:name message:message preferredStyle:UIAlertControllerStyleAlert];
+    [details addAction:[UIAlertAction actionWithTitle:@"Copy patch key"
+                         style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+        [UIPasteboard generalPasteboard].string = key;
+    }]];
+    [details addAction:[UIAlertAction actionWithTitle:@"Close"
+                         style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:details animated:YES completion:nil];
 }
 
 - (void)clearOverrides {
