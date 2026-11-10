@@ -149,6 +149,11 @@ static NSString *YTABCReadTitle(id obj) {
     id owner = self.settingsOwner;
     id section = entry[@"section"];
     if (!owner || section == NSNull.null) return NO;
+    // Sections are published by the Settings manager's data delegate.
+    id delegate = nil;
+    @try { delegate = [owner valueForKey:@"_dataDelegate"]; }
+    @catch (__unused NSException *exception) {}
+    if (!delegate) return NO;
     id items = YTABCSafeObject(section, "items");
     if (![items isKindOfClass:NSArray.class] || ![(NSArray *)items count]) return NO;
     NSNumber *number = entry[@"category"];
@@ -162,12 +167,12 @@ static NSString *YTABCReadTitle(id obj) {
         @"setSectionItems:forCategory:title:icon:titleDescription:headerHidden:");
     SEL withoutIcon = NSSelectorFromString(
         @"setSectionItems:forCategory:title:titleDescription:headerHidden:");
-    Method method = class_getInstanceMethod(object_getClass(owner), withIcon);
+    Method method = class_getInstanceMethod(object_getClass(delegate), withIcon);
     SEL selector = withIcon;
     NSUInteger expectedArgs = 8;
     if (!method || method_getNumberOfArguments(method) != expectedArgs) {
         selector = withoutIcon;
-        method = class_getInstanceMethod(object_getClass(owner), withoutIcon);
+        method = class_getInstanceMethod(object_getClass(delegate), withoutIcon);
         expectedArgs = 7;
     }
     if (!method || method_getNumberOfArguments(method) != expectedArgs) return NO;
@@ -178,11 +183,11 @@ static NSString *YTABCReadTitle(id obj) {
     @try {
         if (expectedArgs == 8)
             ((void (*)(id, SEL, id, NSUInteger, id, id, id, BOOL))objc_msgSend)(
-                owner, selector, existing, number.unsignedIntegerValue,
+                delegate, selector, existing, number.unsignedIntegerValue,
                 title, icon, desc, hidden);
         else
             ((void (*)(id, SEL, id, NSUInteger, id, id, BOOL))objc_msgSend)(
-                owner, selector, existing, number.unsignedIntegerValue,
+                delegate, selector, existing, number.unsignedIntegerValue,
                 title, desc, hidden);
         return YES;
     } @catch (NSException *exception) {
@@ -207,7 +212,7 @@ static NSString *YTABCReadTitle(id obj) {
     BOOL newHidden = restoring ? originalHidden : NO;
     if (![self ytabc_setHeaderHidden:newHidden category:entry]) {
         YTABCShowInspectorNotice(self,
-            @"This loaded section could not be republished with the verified native presentation ABI. No state was saved.");
+            @"The Settings data delegate is unavailable or its native presentation ABI did not match. No local reveal state was recorded.");
         return;
     }
     if (restoring) [self.originalHidden removeObjectForKey:category];
@@ -287,7 +292,13 @@ static NSString *YTABCReadTitle(id obj) {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     if (self.details) return;
     NSDictionary *entry = self.rows[(NSUInteger)indexPath.row];
-    if (![entry[@"loaded"] boolValue]) return;
+    if (![entry[@"loaded"] boolValue]) {
+        NSUInteger categoryID = [entry[@"category"] unsignedIntegerValue];
+        YTABCShowInspectorNotice(self, [NSString stringWithFormat:
+            @"Category %lu is declared by YouTube but has no loaded section controller or row models. Revealing a header cannot create it. Open Eligibility Diagnostics in Native Tools to inspect native update calls and experiment service errors.",
+            (unsigned long)categoryID]);
+        return;
+    }
     [self.navigationController pushViewController:
         [[YTABCSettingsRowsInspector alloc] initWithCategory:entry] animated:YES];
 }
