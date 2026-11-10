@@ -49,6 +49,7 @@ static BOOL sYTABRuntimeSampleRefreshPending;
 // Cache it after its first complete scan instead of re-enumerating on every tab switch.
 static NSArray<YTABRuntimeMethod *> *sYTABRuntimeMethodCatalog;
 NSString * const YTABRuntimeNativeSampleChangedNotification = @"YTABRuntimeNativeSampleChangedNotification";
+NSString * const YTABRuntimeInventoryProgressNotification = @"YTABRuntimeInventoryProgressNotification";
 
 static NSDictionary<NSString *, NSNumber *> *YTABRuntimeStoredOverrides(void) {
     id value = [[NSUserDefaults standardUserDefaults] objectForKey:YTABRuntimeBrowserOverridesKey];
@@ -385,6 +386,42 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImage
         }
     }
 
+    // Saved overrides should not trigger a full application class scan.
+    if (scope == YTABRuntimeImageScopeOverrides) {
+        NSDictionary<NSString *, NSNumber *> *stored = YTABRuntimeStoredOverrides();
+        for (NSString *key in stored) {
+            if ([seen containsObject:key]) continue;
+            NSString *className = nil, *selectorName = nil;
+            BOOL classMethod = NO;
+            if (!YTABRuntimeParsePatchKey(key, &className, &selectorName, &classMethod))
+                continue;
+            Class cls = NSClassFromString(className);
+            if (!cls || !YTABRuntimeIsMainExecutableClass(cls)
+                || YTABRuntimeClassExcluded(className)) continue;
+            SEL selector = NSSelectorFromString(selectorName);
+            Method method = classMethod ? class_getClassMethod(cls, selector)
+                                        : class_getInstanceMethod(cls, selector);
+            if (!YTABRuntimeSelectorAllowed(method)) continue;
+            YTABRuntimeMethod *entry = [YTABRuntimeMethod new];
+            entry.className = className;
+            entry.selectorName = selectorName;
+            entry.classMethod = classMethod;
+            entry.argumentKind = YTABRuntimeArgumentKindForMethod(method);
+            entry.typeEncoding = [NSString stringWithUTF8String:
+                method_getTypeEncoding(method) ?: ""];
+            entry.imageName = @"YouTube runtime";
+            [results addObject:entry];
+            [seen addObject:key];
+        }
+        [results sortUsingComparator:^NSComparisonResult(YTABRuntimeMethod *a,
+                                                           YTABRuntimeMethod *b) {
+            NSComparisonResult order = [a.className localizedCaseInsensitiveCompare:b.className];
+            return order == NSOrderedSame
+                ? [a.selectorName localizedCaseInsensitiveCompare:b.selectorName] : order;
+        }];
+        return results.copy;
+    }
+
     // The generic method inventory is deliberately segregated from flags:
     // selectors with arguments or arbitrary receivers cannot have one
     // global current BOOL until a real invocation has been observed.
@@ -411,9 +448,17 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImage
         if (classes) free(classes);
     }
     if (imageNames) free(imageNames);
-    NSDictionary *persisted = scope == YTABRuntimeImageScopeOverrides
-        ? YTABRuntimeStoredOverrides() : nil;
+    NSUInteger scannedClasses = 0, totalClasses = candidates.count;
     for (Class cls in candidates) {
+        scannedClasses++;
+        if (scannedClasses % 250 == 0 || scannedClasses == totalClasses) {
+            NSUInteger done = scannedClasses;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [[NSNotificationCenter defaultCenter]
+                    postNotificationName:YTABRuntimeInventoryProgressNotification
+                    object:nil userInfo:@{@"done": @(done), @"total": @(totalClasses)}];
+            });
+        }
         NSString *className = NSStringFromClass(cls);
         if (!className.length || YTABRuntimeClassExcluded(className)) continue;
         for (NSUInteger pass = 0; pass < 2; pass++) {
@@ -429,8 +474,7 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImage
                 NSString *key = [NSString stringWithFormat:@"%@%@#%@",
                                  isClassMethod ? @"+" : @"", className, selector];
                 if ([seen containsObject:key]) continue;
-                if (persisted && ![persisted[key] isKindOfClass:NSNumber.class])
-                    continue;
+                // A generic override-only query returned before enumeration.
                 [seen addObject:key];
                 YTABRuntimeMethod *entry = [YTABRuntimeMethod new];
                 entry.className = className;
@@ -480,6 +524,7 @@ static NSArray<NSString *> *YTABRuntimeSearchTokens(NSString *query) {
 @property(nonatomic, strong) UISearchController *searchController;
 @property(nonatomic, strong) UISegmentedControl *scopeControl;
 @property(nonatomic) NSUInteger scanGeneration;
+@property(nonatomic, strong) UILabel *scanProgressLabel;
 @end
 
 // Serialize inventory requests. A rapid Flags -> Methods -> Overrides switch
@@ -521,6 +566,9 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
     self.navigationItem.searchController = self.searchController;
     self.navigationItem.hidesSearchBarWhenScrolling = NO;
     self.definesPresentationContext = YES;
+    [[NSNotificationCenter defaultCenter] addObserver:self
+        selector:@selector(ytabc_inventoryProgress:)
+        name:YTABRuntimeInventoryProgressNotification object:nil];
 
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
         initWithTitle:@"Clear"
@@ -567,15 +615,20 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
         [progress.trailingAnchor constraintLessThanOrEqualToAnchor:loading.trailingAnchor constant:-28],
     ]];
     self.tableView.backgroundView = loading;
+    self.scanProgressLabel = hint;
 
     YTABRuntimeImageScope scope = (YTABRuntimeImageScope)self.scopeControl.selectedSegmentIndex;
     __weak typeof(self) weakSelf = self;
-    dispatch_async(YTABRuntimeInventoryQueue(), ^{
+    dispatch_queue_t queue = scope == YTABRuntimeImageScopeMethods
+        ? YTABRuntimeInventoryQueue()
+        : dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
+    dispatch_async(queue, ^{
         NSArray<YTABRuntimeMethod *> *methods = YTABRuntimeDiscoverMethods(scope);
         dispatch_async(dispatch_get_main_queue(), ^{
             __strong typeof(weakSelf) strongSelf = weakSelf;
             if (!strongSelf || generation != strongSelf.scanGeneration) return;
             strongSelf.tableView.backgroundView = nil;
+            strongSelf.scanProgressLabel = nil;
             strongSelf.allMethods = methods;
             [strongSelf applyFilter];
             if (!methods.count) {
@@ -593,6 +646,21 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
             }
         });
     });
+}
+
+- (void)ytabc_inventoryProgress:(NSNotification *)notification {
+    if (self.scopeControl.selectedSegmentIndex != YTABRuntimeImageScopeMethods ||
+        !self.scanProgressLabel) return;
+    NSUInteger done = [notification.userInfo[@"done"] unsignedIntegerValue];
+    NSUInteger total = [notification.userInfo[@"total"] unsignedIntegerValue];
+    if (total) self.scanProgressLabel.text = [NSString stringWithFormat:
+        @"Indexing native methods: %lu / %lu classes. Search will be ready when indexing completes.",
+        (unsigned long)done, (unsigned long)total];
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self
+        name:YTABRuntimeInventoryProgressNotification object:nil];
 }
 
 // Presentation-independent search source. The modern subclass provides a
