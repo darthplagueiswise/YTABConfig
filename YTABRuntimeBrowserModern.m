@@ -126,7 +126,6 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     _unknownLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
     _unknownLabel.textColor = UIColor.tertiaryLabelColor;
     _unknownLabel.accessibilityLabel = @"System value not observed yet";
-    [_unknownLabel.widthAnchor constraintEqualToConstant:49].active = YES;
     _unknownLabel.hidden = YES;
 
     _modeButton = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -140,8 +139,24 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     [_modeButton setContentHuggingPriority:UILayoutPriorityRequired
                                   forAxis:UILayoutConstraintAxisHorizontal];
 
+    // Hide the switch without letting UIStackView apply conflicting
+    // "UISV-hiding" zero-width constraints against its intrinsic size.
+    UIView *valueSlot = [UIView new];
+    _overrideSwitch.translatesAutoresizingMaskIntoConstraints = NO;
+    _unknownLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [valueSlot addSubview:_overrideSwitch];
+    [valueSlot addSubview:_unknownLabel];
+    [NSLayoutConstraint activateConstraints:@[
+        [valueSlot.widthAnchor constraintGreaterThanOrEqualToConstant:58],
+        [valueSlot.heightAnchor constraintGreaterThanOrEqualToConstant:32],
+        [_overrideSwitch.centerXAnchor constraintEqualToAnchor:valueSlot.centerXAnchor],
+        [_overrideSwitch.centerYAnchor constraintEqualToAnchor:valueSlot.centerYAnchor],
+        [_unknownLabel.centerXAnchor constraintEqualToAnchor:valueSlot.centerXAnchor],
+        [_unknownLabel.centerYAnchor constraintEqualToAnchor:valueSlot.centerYAnchor],
+    ]];
+
     UIStackView *headline = [[UIStackView alloc] initWithArrangedSubviews:@[
-        _selectorLabel, _unknownLabel, _overrideSwitch
+        _selectorLabel, valueSlot
     ]];
     headline.axis = UILayoutConstraintAxisHorizontal;
     headline.alignment = UIStackViewAlignmentCenter;
@@ -166,7 +181,6 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
         [stack.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
         [stack.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:9],
         [stack.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-9],
-        [_overrideSwitch.widthAnchor constraintGreaterThanOrEqualToConstant:49],
         [_modeButton.heightAnchor constraintGreaterThanOrEqualToConstant:30],
     ]];
     return self;
