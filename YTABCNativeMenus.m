@@ -16,6 +16,8 @@ extern NSDictionary<NSString *, id> *YTABCCopyNativeDiagnostics(void);
 extern BOOL YTABCRetryNativeExperimentsSelectedTab(void);
 extern void YTABCInstallNativeStudyControlsHooks(void);
 extern NSDictionary<NSString *, id> *YTABCCopyNativeStudyControls(void);
+extern BOOL YTABCRunPhenotypeResync(void);
+extern BOOL YTABCClearNativeExperimentsCaches(void);
 
 static __weak id sYTABCObservedPlaybackOverlay;
 static void (*sYTABCOriginalInstallGesture)(id, SEL);
@@ -134,7 +136,7 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
 @implementation YTABCNativeMenusViewController
 
 - (instancetype)initWithSettingsOwner:(id)owner {
-    self = [super initWithStyle:UITableViewStyleGrouped];
+    self = [super initWithStyle:UITableViewStyleInsetGrouped];
     if (!self) return nil;
     _settingsOwner = owner;
     self.title = @"YouTube Native Tools";
@@ -142,6 +144,9 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
         @{
             @"title": @"Native experiment screens",
             @"rows": @[
+                @{@"title": @"Eligibility / request diagnosis",
+                  @"subtitle": @"Categories 30 and 37, native checks, search completion and server errors",
+                  @"kind": @"eligibilityReport"},
                 // This exact root constructs the native results controller,
                 // per original ARM64: classref 0x10cbdada8 (0x101434748).
                 // YTSettingsExperimentsResultsViewController is a child, not
@@ -199,6 +204,12 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
                 @{@"title": @"Developer / QA inventory",
                   @"subtitle": @"Check settings and command entry points (read only)",
                   @"kind": @"developer"},
+                @{@"title": @"Resync native Phenotype",
+                  @"subtitle": @"Use syncWithCallback: on the observed native syncer",
+                  @"kind": @"phenotypeResync"},
+                @{@"title": @"Clear native experiment caches",
+                  @"subtitle": @"Use clearCaches on the observed experiment service",
+                  @"kind": @"experimentsClearCaches"},
                 @{@"title": @"Open captured config flags",
                   @"subtitle": @"Original YTGlobalConfig / YTColdConfig / YTHotConfig BOOLs and current overrides",
                   @"kind": @"configFlags"},
@@ -421,6 +432,9 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
     }
     [lines addObject:@"\nNATIVE EXPERIMENT SERVICE"];
     for (NSString *key in @[@"nativeExperimentsServiceObserved", @"nativeSearchCalls",
+                             @"searchSuccessCallbacks", @"searchFailureCallbacks",
+                             @"lastSearchHTTPStatus", @"lastSearchErrorCode",
+                             @"lastSearchErrorDomain", @"lastSearchResponseClass",
                              @"nativeOptInCalls", @"nativeOptOutCalls",
                              @"nativeHasGooglerAccount", @"nativeIsInternalSyncer"]) {
         if (network[key])
@@ -435,6 +449,65 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
         [lines insertObject:@"Native search was observed but no result-section update was observed.\n" atIndex:0];
     YTABCPushDiagnosticsReport(self, @"Experiments diagnostics",
                               [lines componentsJoinedByString:@"\n"]);
+}
+
+- (void)showEligibilityHealth {
+    NSDictionary *network = YTABCCopyNativeDiagnostics() ?: @{};
+    NSDictionary *ui = YTABCCopyNativeExperimentsHealth() ?: @{};
+    NSDictionary *studies = YTABCCopyNativeStudyControls() ?: @{};
+    id sections = nil;
+    @try { sections = [self.settingsOwner valueForKey:@"settingsSectionControllers"]; }
+    @catch (__unused NSException *exception) {}
+    if (![sections isKindOfClass:NSDictionary.class]) sections = @{};
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+
+    [lines addObject:@"SETTINGS DELIVERY"];
+    for (NSNumber *cat in @[@30, @37]) {
+        NSString *prefix = [NSString stringWithFormat:@"category%@", cat];
+        [lines addObject:[NSString stringWithFormat:
+            @"Category %@ — %@ | update calls: %@ | entry passed: %@",
+            cat, sections[cat] ? @"loaded" : @"not loaded",
+            network[[prefix stringByAppendingString:@"UpdateCalls"]] ?: @0,
+            network[[prefix stringByAppendingString:@"HadEntry"]] ?: @NO]];
+    }
+    [lines addObject:@"Not loaded means no native section items were available. A declared category is not proof of eligibility."];
+
+    [lines addObject:@"\nNATIVE IDENTITY / ELIGIBILITY SIGNALS"];
+    for (NSString *key in @[@"nativeGooglerCheckObserved", @"nativeHasGooglerAccount",
+                            @"nativeInternalCheckObserved", @"nativeIsInternalSyncer",
+                            @"forceHasGooglerAccount", @"forceIsGooglerAccount",
+                            @"forceStandardInternalSyncer"])
+        [lines addObject:[NSString stringWithFormat:@"%@ = %@", key,
+            network[key] ?: @"not observed"]];
+    [lines addObject:@"Local force flags do not grant account or server authorization."];
+
+    [lines addObject:@"\nNATIVE EXPERIMENT SERVICE"];
+    for (NSString *key in @[@"rootCurrentlyAlive", @"parentResponderWasNonNil",
+                             @"nativeTabControllerCount", @"makeSearchCalls",
+                             @"lastResultSectionCount"])
+        [lines addObject:[NSString stringWithFormat:@"%@ = %@", key,
+            ui[key] ?: @"not observed"]];
+    for (NSString *key in @[@"nativeExperimentsServiceObserved", @"nativeSearchCalls",
+                             @"searchSuccessCallbacks", @"searchFailureCallbacks",
+                             @"lastSearchErrorDomain", @"lastSearchErrorCode",
+                             @"lastSearchHTTPStatus", @"lastSearchResponseClass"])
+        [lines addObject:[NSString stringWithFormat:@"%@ = %@", key,
+            network[key] ?: @"not observed"]];
+
+    NSUInteger calls = [network[@"nativeSearchCalls"] unsignedIntegerValue];
+    NSUInteger ok = [network[@"searchSuccessCallbacks"] unsignedIntegerValue];
+    NSUInteger errors = [network[@"searchFailureCallbacks"] unsignedIntegerValue];
+    NSUInteger sectionsCount = [ui[@"lastResultSectionCount"] unsignedIntegerValue];
+    NSString *outcome = !calls ? @"No service request observed; investigate native controller and responder."
+        : errors && !ok ? @"Native service reported an error; inspect HTTP/status and error domain."
+        : ok && !sectionsCount ? @"Search succeeded but no result sections were observed; investigate empty/filtered response or result rendering."
+        : sectionsCount ? @"Result sections were delivered; inspect native study cell bindings."
+        : @"A request was observed but no completion callback yet; inspect request lifecycle.";
+    [lines addObject:[NSString stringWithFormat:@"\nDIAGNOSIS\n%@", outcome]];
+    [lines addObject:[NSString stringWithFormat:@"\nSTUDY UI\ninstalled hooks %@ | bound cells %@",
+        studies[@"installedStudyHooks"] ?: @0, studies[@"studyCellEntryBindings"] ?: @0]];
+    [lines addObject:@"Only sanitized counters, error domain/code and HTTP status are collected. No credentials or request payloads."];
+    YTABCPushDiagnosticsReport(self, @"Eligibility Diagnosis", [lines componentsJoinedByString:@"\n"]);
 }
 
 - (void)showInventory:(NSString *)kind {
@@ -477,7 +550,9 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
                                         [(NSUInteger)indexPath.row];
     NSString *kind = entry[@"kind"];
     id owner = self.settingsOwner;
-    if ([kind isEqualToString:@"experimentsHealth"]) {
+    if ([kind isEqualToString:@"eligibilityReport"]) {
+        [self showEligibilityHealth];
+    } else if ([kind isEqualToString:@"experimentsHealth"]) {
         [self showExperimentsHealth];
     } else if ([kind isEqualToString:@"studyControlsHealth"]) {
         [self showNativeStudyControls];
@@ -506,6 +581,16 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
     } else if ([kind isEqualToString:@"settingsHidden"]) {
         [self.navigationController pushViewController:
             YTABCCreateSettingsRowsInspector(owner) animated:YES];
+    } else if ([kind isEqualToString:@"phenotypeResync"]) {
+        BOOL started = YTABCRunPhenotypeResync();
+        YTABCShowNotice(self, @"Native Phenotype sync", started
+            ? @"Native syncWithCallback: invoked. Completion and permissions still depend on the native service."
+            : @"No live native syncer with a verified ABI was observed.");
+    } else if ([kind isEqualToString:@"experimentsClearCaches"]) {
+        BOOL cleared = YTABCClearNativeExperimentsCaches();
+        YTABCShowNotice(self, @"Experiment cache", cleared
+            ? @"Native clearCaches invoked. Retry a tab to request fresh results."
+            : @"No compatible live experiment service was observed.");
     } else if ([kind isEqualToString:@"playback"]) {
         [self togglePlaybackOverlay];
     } else if ([kind isEqualToString:@"creation"]) {
