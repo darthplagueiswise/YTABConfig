@@ -9,6 +9,7 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <string.h>
+extern id YTABCLiveSettingsSectionItemManager(void);
 
 static id YTABCSafeObject(id object, const char *name) {
     if (!object || !name) return nil;
@@ -149,8 +150,19 @@ static NSString *YTABCReadTitle(id obj) {
     id owner = self.settingsOwner;
     id section = entry[@"section"];
     if (!owner || section == NSNull.null) return NO;
-    // 'owner' is YTSettingsViewController, already the manager's data
-    // delegate. Do not look for another _dataDelegate on the VC itself.
+    // YTSettingsSectionItemManager (not the view controller) publishes
+    // items through its original _dataDelegate. Validate the exact live
+    // Settings VC owning the manager before changing a presentation header.
+    id manager = YTABCLiveSettingsSectionItemManager();
+    if (!manager) return NO;
+    id managerOwner = nil, dataDelegate = nil;
+    @try {
+        managerOwner = [manager valueForKey:@"_settingsViewControllerDelegate"];
+        dataDelegate = [manager valueForKey:@"_dataDelegate"];
+    } @catch (__unused NSException *exception) {
+        return NO;
+    }
+    if (managerOwner != owner || !dataDelegate) return NO;
     id items = YTABCSafeObject(section, "items");
     if (![items isKindOfClass:NSArray.class] || ![(NSArray *)items count]) return NO;
     NSNumber *number = entry[@"category"];
@@ -164,12 +176,12 @@ static NSString *YTABCReadTitle(id obj) {
         @"setSectionItems:forCategory:title:icon:titleDescription:headerHidden:");
     SEL withoutIcon = NSSelectorFromString(
         @"setSectionItems:forCategory:title:titleDescription:headerHidden:");
-    Method method = class_getInstanceMethod(object_getClass(owner), withIcon);
+    Method method = class_getInstanceMethod(object_getClass(dataDelegate), withIcon);
     SEL selector = withIcon;
     NSUInteger expectedArgs = 8;
     if (!method || method_getNumberOfArguments(method) != expectedArgs) {
         selector = withoutIcon;
-        method = class_getInstanceMethod(object_getClass(owner), withoutIcon);
+        method = class_getInstanceMethod(object_getClass(dataDelegate), withoutIcon);
         expectedArgs = 7;
     }
     if (!method || method_getNumberOfArguments(method) != expectedArgs) return NO;
@@ -180,11 +192,11 @@ static NSString *YTABCReadTitle(id obj) {
     @try {
         if (expectedArgs == 8)
             ((void (*)(id, SEL, id, NSUInteger, id, id, id, BOOL))objc_msgSend)(
-                owner, selector, existing, number.unsignedIntegerValue,
+                dataDelegate, selector, existing, number.unsignedIntegerValue,
                 title, icon, desc, hidden);
         else
             ((void (*)(id, SEL, id, NSUInteger, id, id, BOOL))objc_msgSend)(
-                owner, selector, existing, number.unsignedIntegerValue,
+                dataDelegate, selector, existing, number.unsignedIntegerValue,
                 title, desc, hidden);
         return YES;
     } @catch (NSException *exception) {
@@ -209,7 +221,7 @@ static NSString *YTABCReadTitle(id obj) {
     BOOL newHidden = restoring ? originalHidden : NO;
     if (![self ytabc_setHeaderHidden:newHidden category:entry]) {
         YTABCShowInspectorNotice(self,
-            @"The Settings data delegate is unavailable or its native presentation ABI did not match. No local reveal state was recorded.");
+            @"A matching live Settings section-item manager was not available or the native presentation ABI did not match. Nothing was changed.");
         return;
     }
     if (restoring) [self.originalHidden removeObjectForKey:category];
