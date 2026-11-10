@@ -11,6 +11,7 @@ extern UIViewController *YTABCCreateSettingsRowsInspector(id settingsOwner);
 #import <objc/message.h>
 #import <substrate.h>
 #import <stdlib.h>
+#import <string.h>
 extern NSDictionary<NSString *, id> *YTABCCopyNativeExperimentsHealth(void);
 extern NSDictionary<NSString *, id> *YTABCCopyNativeDiagnostics(void);
 extern BOOL YTABCRetryNativeExperimentsSelectedTab(void);
@@ -21,6 +22,35 @@ extern BOOL YTABCClearNativeExperimentsCaches(void);
 
 static __weak id sYTABCObservedPlaybackOverlay;
 static void (*sYTABCOriginalInstallGesture)(id, SEL);
+static const void *YTABCNativeQASwitchKind = &YTABCNativeQASwitchKind;
+
+// Verified local QA control signatures from the 21.43.5 main executable.
+static id YTABCSharedCreationConsole(void) {
+    Class cls = NSClassFromString(@"YTCreationTimelineDebugConsole");
+    SEL shared = NSSelectorFromString(@"shared");
+    Method m = cls ? class_getClassMethod(cls, shared) : NULL;
+    if (!m || strcmp(method_getTypeEncoding(m) ?: "", "@16@0:8")) return nil;
+    @try { return ((id (*)(id, SEL))objc_msgSend)(cls, shared); }
+    @catch (__unused NSException *exception) { return nil; }
+}
+static NSNumber *YTABCReadQABool(id target, NSString *name) {
+    if (!target) return nil;
+    SEL selector = NSSelectorFromString(name);
+    Method m = class_getInstanceMethod(object_getClass(target), selector);
+    if (!m || strcmp(method_getTypeEncoding(m) ?: "", "B16@0:8")) return nil;
+    @try { return @(((BOOL (*)(id, SEL))objc_msgSend)(target, selector)); }
+    @catch (__unused NSException *exception) { return nil; }
+}
+static BOOL YTABCSetQABool(id target, NSString *name, BOOL value) {
+    if (!target) return NO;
+    SEL selector = NSSelectorFromString(name);
+    Method m = class_getInstanceMethod(object_getClass(target), selector);
+    if (!m || strcmp(method_getTypeEncoding(m) ?: "", "v20@0:8B16")) return NO;
+    @try {
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(target, selector, value);
+        return YES;
+    } @catch (__unused NSException *exception) { return NO; }
+}
 
 static void YTABCObservedInstallGesture(id self, SEL cmd) {
     // Capture ONLY an instance created by YouTube's own playback lifecycle.
@@ -317,6 +347,31 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
     cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
     cell.detailTextLabel.adjustsFontForContentSizeCategory = YES;
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    // Direct stateful controls for real QA features available in this session.
+    NSString *kind = entry[@"kind"];
+    if ([kind isEqualToString:@"playback"] || [kind isEqualToString:@"creation"]) {
+        id target = [kind isEqualToString:@"playback"]
+            ? sYTABCObservedPlaybackOverlay : YTABCSharedCreationConsole();
+        NSNumber *native = YTABCReadQABool(target,
+            [kind isEqualToString:@"playback"] ? @"debugOverlayVisible" : @"isEnabled");
+        if (native) {
+            UISwitch *toggle = [UISwitch new];
+            toggle.onTintColor = UIColor.systemGreenColor;
+            [toggle setOn:native.boolValue animated:NO];
+            toggle.accessibilityLabel = [kind isEqualToString:@"playback"]
+                ? @"Native playback debug overlay" : @"Native creation timeline debug console";
+            objc_setAssociatedObject(toggle, YTABCNativeQASwitchKind, kind,
+                OBJC_ASSOCIATION_COPY_NONATOMIC);
+            [toggle addTarget:self action:@selector(ytabc_nativeQASwitchChanged:)
+                forControlEvents:UIControlEventValueChanged];
+            cell.accessoryType = UITableViewCellAccessoryNone;
+            cell.accessoryView = toggle;
+        } else {
+            cell.detailTextLabel.text = [kind isEqualToString:@"playback"]
+                ? @"No live playback overlay. Open a video first."
+                : @"The native debug console has not been initialized.";
+        }
+    }
     NSString *className = entry[@"class"];
     if (className && !NSClassFromString(className)) {
         cell.detailTextLabel.text =
@@ -329,6 +384,28 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
         }
     }
     return cell;
+}
+
+- (void)ytabc_nativeQASwitchChanged:(UISwitch *)sender {
+    NSString *kind = objc_getAssociatedObject(sender, YTABCNativeQASwitchKind);
+    id target = [kind isEqualToString:@"playback"]
+        ? sYTABCObservedPlaybackOverlay
+        : ([kind isEqualToString:@"creation"] ? YTABCSharedCreationConsole() : nil);
+    NSString *setter = [kind isEqualToString:@"playback"]
+        ? @"setDebugOverlayVisible:" : @"setIsEnabled:";
+    if (!target || !YTABCSetQABool(target, setter, sender.isOn)) {
+        [sender setOn:!sender.isOn animated:YES];
+        YTABCShowNotice(self, @"QA control unavailable",
+            @"Native QA instance or its verified Boolean setter is unavailable.");
+        return;
+    }
+    [[[UISelectionFeedbackGenerator alloc] init] selectionChanged];
+    [self.tableView reloadData];
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [self.tableView reloadData];
 }
 
 - (BOOL)pushNativeController:(NSString *)className {
