@@ -49,13 +49,21 @@ require_text Settings.x 'YTABCCopyNativeDiagnostics()'
 # No unimplemented hooks, missing linker symbols or false toggles are shipped.
 for symbol in \
   YTABCInstallEmployeeExperimentHooks \
-  YTABCForceIsGooglerAccount \
   YTABCBypassIdentitySearch; do
   reject_text Tweak.x "$symbol"
   reject_text Settings.x "$symbol"
 done
 reject_text Makefile 'YTInternalIdentity.x'
-reject_text Settings.x '@"YTABCForceIsGooglerAccount"'
+# Validate each local-only selector and its independent setting.
+require_text YTABNativeDiagnostics.m '@"isGooglerAccount:"'
+require_text YTABNativeDiagnostics.m '"B24@0:8@16"'
+require_text YTABNativeDiagnostics.m '@"YTABCForceIsGooglerAccount"'
+require_text YTABNativeDiagnostics.m '@"YTABCForceHasGooglerAccount"'
+require_text YTABNativeDiagnostics.m '@"YTABCForceStandardInternalSyncer"'
+require_text YTABNativeDiagnostics.m 'return forced ? YES : nativeValue;'
+require_text Settings.x '@"YTABCForceIsGooglerAccount"'
+require_text Settings.x '@"YTABCForceHasGooglerAccount"'
+require_text Settings.x '@"YTABCForceStandardInternalSyncer"'
 reject_text Settings.x '@"YTABCBypassIdentitySearch"'
 require_text Settings.x '@"YTABCTracePhenotype"'
 
