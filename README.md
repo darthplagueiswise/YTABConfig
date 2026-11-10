@@ -59,9 +59,14 @@ executable. This supersedes the previous draft's missing functions. The module
 uses `MSHookMessageEx` only after an exact type-encoding comparison, and
 continues to call each original method unchanged.
 
-It records the native results of `hasGooglerAccount` and
-`isInternalHeterodyneSyncer` rather than pretending a non-Googler account
-is an internal Google identity. It observes the original
+There are three independent, default-OFF **local** Objective-C BOOL
+overrides: `isGooglerAccount:`, `hasGooglerAccount`, and
+`isInternalHeterodyneSyncer`. Each hook returns `YES` when its respective
+toggle is ON and returns the original native BOOL when OFF. The diagnostic
+view distinguishes observed native results from enabled local overrides.
+These hooks do not alter identity credentials or remote requests.
+
+The module also observes the original
 `PHTHeterodyneSyncer.syncWithCallback:` and
 `PHTFlatFilePhenotype.syncExperimentsWithServerInternal:syncAfterConfiguration:callback:`
 paths. An optional manual resync uses only the real previously observed syncer.
@@ -75,8 +80,7 @@ are intentionally omitted from logs.
 
 Feature Lab provides switches for the four independent traces, a read-only
 diagnostic state dialog, native resync and native cache clear. These actions are
-unavailable until the corresponding native instance has been observed. No
-authentication or employee/dogfood entitlement bypass is exposed.
+unavailable until the corresponding native instance has been observed. The three opt-in local BOOL overrides do not grant server-side entitlements.
 
 The old incomplete `YTInternalIdentity.x` remains as uncompiled historical
 source; it must not be used to claim that an Employee mode exists. This is
