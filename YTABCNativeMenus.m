@@ -43,11 +43,6 @@ void YTABCInstallNativeMenuObservationHooks(void) {
     }
 }
 
-static id YTABCMessageObject(id target, SEL sel) {
-    if (!target || ![target respondsToSelector:sel]) return nil;
-    return ((id (*)(id, SEL))objc_msgSend)(target, sel);
-}
-
 static void YTABCShowNotice(UIViewController *owner, NSString *title, NSString *message) {
     NSLog(@"[YTABC NativeMenus] %@: %@", title, message);
     if (!owner) return;
