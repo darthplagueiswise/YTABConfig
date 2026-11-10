@@ -55,6 +55,8 @@ static NSString *YTABCReadTitle(id obj) {
 @interface YTABCSettingsRowsInspector : UITableViewController
 @property(nonatomic, strong) NSArray<NSDictionary<NSString *, id> *> *rows;
 @property(nonatomic, strong) NSArray<NSDictionary<NSString *, id> *> *details;
+@property(nonatomic, strong) NSArray<NSArray<NSDictionary<NSString *, id> *> *> *groupedRows;
+@property(nonatomic, strong) NSArray<NSString *> *groupTitles;
 @property(nonatomic, weak) id settingsOwner;
 @property(nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *originalHidden;
 - (void)refreshLiveCategories;
@@ -139,7 +141,34 @@ static NSString *YTABCReadTitle(id obj) {
             @"itemCount": @(count), @"localOverride": @(changedHere),
             @"owner": owner ?: NSNull.null}];
     }
+    // Categories 30/37 are the user's primary inspection targets.
+    // Group by the *actual loaded state* instead of mixing unavailable
+    // declarations among the actionable section controllers.
+    NSMutableArray *priority = [NSMutableArray array];
+    NSMutableArray *available = [NSMutableArray array];
+    NSMutableArray *unavailable = [NSMutableArray array];
+    for (NSDictionary *entry in rows) {
+        NSUInteger category = [entry[@"category"] unsignedIntegerValue];
+        if (category == 30 || category == 37) [priority addObject:entry];
+        else if ([entry[@"loaded"] boolValue]) [available addObject:entry];
+        else [unavailable addObject:entry];
+    }
+    NSMutableArray *groups = [NSMutableArray array], *titles = [NSMutableArray array];
+    if (priority.count) {
+        [groups addObject:priority.copy];
+        [titles addObject:@"Navigation categories · 30 / 37"];
+    }
+    if (available.count) {
+        [groups addObject:available.copy];
+        [titles addObject:@"Loaded native sections"];
+    }
+    if (unavailable.count) {
+        [groups addObject:unavailable.copy];
+        [titles addObject:@"Declared but not loaded"];
+    }
     self.rows = rows.copy;
+    self.groupedRows = groups.copy;
+    self.groupTitles = titles.copy;
 }
 
 // Re-publish the exact already loaded section items through YouTube's existing
@@ -253,14 +282,30 @@ static NSString *YTABCReadTitle(id obj) {
     _details = details.copy;
     return self;
 }
+- (NSArray<NSDictionary<NSString *, id> *> *)ytabc_entriesInSection:(NSInteger)section {
+    if (self.details) return self.details;
+    return (section >= 0 && section < (NSInteger)self.groupedRows.count)
+        ? self.groupedRows[(NSUInteger)section] : @[];
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    (void)tableView;
+    return self.details ? 1 : (NSInteger)self.groupedRows.count;
+}
+
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    (void)tableView; (void)section;
-    return (NSInteger)(self.details ?: self.rows).count;
+    (void)tableView;
+    return (NSInteger)[self ytabc_entriesInSection:section].count;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    (void)tableView;
+    return self.details ? nil : self.groupTitles[(NSUInteger)section];
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView
         cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     (void)tableView;
-    NSDictionary *entry = (self.details ?: self.rows)[(NSUInteger)indexPath.row];
+    NSDictionary *entry = [self ytabc_entriesInSection:indexPath.section][(NSUInteger)indexPath.row];
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     cell.textLabel.text = entry[@"title"];
     cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
@@ -300,7 +345,7 @@ static NSString *YTABCReadTitle(id obj) {
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     if (self.details) return;
-    NSDictionary *entry = self.rows[(NSUInteger)indexPath.row];
+    NSDictionary *entry = [self ytabc_entriesInSection:indexPath.section][(NSUInteger)indexPath.row];
     if (![entry[@"loaded"] boolValue]) {
         NSUInteger categoryID = [entry[@"category"] unsignedIntegerValue];
         YTABCShowInspectorNotice(self, [NSString stringWithFormat:
@@ -313,9 +358,10 @@ static NSString *YTABCReadTitle(id obj) {
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView; (void)section;
-    return self.details
-        ? @"These are the original section-item models. Rows suppressed by server logic are not synthesized or unlocked."
-        : @"Reveal republishes only existing native items with headerHidden:NO for this session; Restore reverts the original header state. It never enables disabled rows, creates server data, or changes account eligibility.";
+    if (self.details)
+        return @"These are the original section-item models. Rows suppressed by server logic are not synthesized or unlocked.";
+    if (section != (NSInteger)self.groupedRows.count - 1) return nil;
+    return @"Reveal and Restore affect only loaded section headers. Unloaded categories cannot be created by a local visibility override.";
 }
 @end
 
