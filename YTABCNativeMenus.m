@@ -211,8 +211,8 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
         @{
             @"title": @"Native Settings categories and rows",
             @"rows": @[
-                @{@"title": @"Inspect loaded Settings rows (read-only)",
-                  @"subtitle": @"Real category IDs, hidden-header states and loaded items; no account or server-row bypass",
+                @{@"title": @"Reveal loaded Settings sections",
+                  @"subtitle": @"Inspect real categories and reveal native headers locally; Restore returns to system behavior",
                   @"kind": @"settingsHidden"}
             ]
         }
