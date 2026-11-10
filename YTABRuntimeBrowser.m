@@ -40,6 +40,8 @@ typedef NS_ENUM(NSInteger, YTABRuntimeArgumentKind) {
 static NSDictionary<NSString *, NSNumber *> *sYTABRuntimeOverrideCache;
 static NSMutableSet<NSString *> *sYTABRuntimeInstalledKeys;
 static NSMutableDictionary<NSString *, NSNumber *> *sYTABRuntimeObservedNative;
+static BOOL sYTABRuntimeSampleRefreshPending;
+NSString * const YTABRuntimeNativeSampleChangedNotification = @"YTABRuntimeNativeSampleChangedNotification";
 
 static NSDictionary<NSString *, NSNumber *> *YTABRuntimeStoredOverrides(void) {
     id value = [[NSUserDefaults standardUserDefaults] objectForKey:YTABRuntimeBrowserOverridesKey];
@@ -63,10 +65,28 @@ static NSNumber *YTABRuntimeCachedOverride(NSString *key) {
 
 static void YTABRuntimeRememberNative(NSString *key, BOOL value) {
     if (!key.length) return;
+    BOOL shouldPost = NO;
     @synchronized([YTABRuntimeMethod class]) {
-        if (!sYTABRuntimeObservedNative) sYTABRuntimeObservedNative = [NSMutableDictionary dictionary];
-        sYTABRuntimeObservedNative[key] = @(value);
+        if (!sYTABRuntimeObservedNative)
+            sYTABRuntimeObservedNative = [NSMutableDictionary dictionary];
+        NSNumber *previous = sYTABRuntimeObservedNative[key];
+        if (!previous || previous.boolValue != value) {
+            sYTABRuntimeObservedNative[key] = @(value);
+            if (!sYTABRuntimeSampleRefreshPending) {
+                sYTABRuntimeSampleRefreshPending = YES;
+                shouldPost = YES;
+            }
+        }
     }
+    // Coalesce native getter observations into at most one UI refresh per
+    // main queue turn. Never force a getter to execute for UI sampling.
+    if (shouldPost) dispatch_async(dispatch_get_main_queue(), ^{
+        @synchronized([YTABRuntimeMethod class]) {
+            sYTABRuntimeSampleRefreshPending = NO;
+        }
+        [[NSNotificationCenter defaultCenter]
+            postNotificationName:YTABRuntimeNativeSampleChangedNotification object:nil];
+    });
 }
 
 static NSNumber *YTABRuntimeObservedNative(NSString *key) {
