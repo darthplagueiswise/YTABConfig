@@ -183,8 +183,12 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
                                                    reuseIdentifier:nil];
     cell.textLabel.text = entry[@"title"];
     cell.textLabel.numberOfLines = 2;
+    cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+    cell.textLabel.adjustsFontForContentSizeCategory = YES;
     cell.detailTextLabel.text = entry[@"subtitle"];
     cell.detailTextLabel.numberOfLines = 3;
+    cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    cell.detailTextLabel.adjustsFontForContentSizeCategory = YES;
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     NSString *className = entry[@"class"];
     if (className && !NSClassFromString(className)) {
