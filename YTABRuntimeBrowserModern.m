@@ -263,7 +263,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     [header addSubview:search];
 
     UILabel *sourceLabel = [UILabel new];
-    sourceLabel.text = @"SOURCE";
+    sourceLabel.text = @"VIEW";
     sourceLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption2];
     sourceLabel.textColor = [UIColor secondaryLabelColor];
     sourceLabel.adjustsFontForContentSizeCategory = YES;
@@ -366,7 +366,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     (void)section;
-    return @"Flags: original config BOOLs captured at launch, with known native values. Methods: general Objective-C BOOL methods (not global flags). Overrides: only modified entries. Green ON = native true; blue ON = forced true; blue text + OFF = forced false. Long press to reset to System. Methods without observed calls remain unknown.";
+    return @"Flags = original BOOLs captured at startup. Methods = general Objective-C methods, not global flags. Long-press to reset overrides.";
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView
