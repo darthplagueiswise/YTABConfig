@@ -85,7 +85,8 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     // The selector is content, not a headline. Avoid fixed 15pt monospaced
     // fonts and long technical type encodings in the primary row.
     _selectorLabel = [UILabel new];
-    _selectorLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+    _selectorLabel.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleSubheadline]
+        scaledFontForFont:[UIFont systemFontOfSize:13.0 weight:UIFontWeightMedium]];
     _selectorLabel.adjustsFontForContentSizeCategory = YES;
     _selectorLabel.numberOfLines = 1;
     _selectorLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
@@ -370,6 +371,15 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     if (configuration) {
         configuration.title = modeLabel;
         configuration.contentInsets = NSDirectionalEdgeInsetsMake(2, 8, 2, 8);
+        configuration.titleTextAttributesTransformer =
+            ^NSDictionary<NSAttributedStringKey, id> *
+                (NSDictionary<NSAttributedStringKey, id> *incoming) {
+            NSMutableDictionary<NSAttributedStringKey, id> *attributes = [incoming mutableCopy];
+            attributes[NSFontAttributeName] =
+                [[UIFontMetrics metricsForTextStyle:UIFontTextStyleCaption1]
+                    scaledFontForFont:[UIFont systemFontOfSize:11.5 weight:UIFontWeightMedium]];
+            return attributes;
+        };
         cell.modeButton.configuration = configuration;
     } else {
         [cell.modeButton setTitle:modeLabel forState:UIControlStateNormal];
