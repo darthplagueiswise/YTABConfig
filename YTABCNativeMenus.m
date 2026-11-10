@@ -70,6 +70,60 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
     return [lines componentsJoinedByString:@"\n"];
 }
 
+// Present native diagnostics as a scrollable, selectable document.
+@interface YTABCDiagnosticsReportViewController : UIViewController
+@property(nonatomic, copy) NSString *report;
+- (instancetype)initWithTitle:(NSString *)title report:(NSString *)report;
+@end
+
+@implementation YTABCDiagnosticsReportViewController
+- (instancetype)initWithTitle:(NSString *)title report:(NSString *)report {
+    self = [super initWithNibName:nil bundle:nil];
+    if (self) { self.title = title; _report = [report copy] ?: @""; }
+    return self;
+}
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = UIColor.systemBackgroundColor;
+    UITextView *body = [UITextView new];
+    body.editable = NO;
+    body.selectable = YES;
+    body.alwaysBounceVertical = YES;
+    body.backgroundColor = UIColor.clearColor;
+    body.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    body.adjustsFontForContentSizeCategory = YES;
+    body.textColor = UIColor.labelColor;
+    body.text = self.report;
+    body.textContainerInset = UIEdgeInsetsMake(18, 16, 18, 16);
+    body.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:body];
+    UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
+    [NSLayoutConstraint activateConstraints:@[
+        [body.topAnchor constraintEqualToAnchor:safe.topAnchor],
+        [body.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor],
+        [body.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
+        [body.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
+    ]];
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+        initWithTitle:@"Copy" style:UIBarButtonItemStylePlain
+        target:self action:@selector(copyReport)];
+}
+- (void)copyReport {
+    [UIPasteboard generalPasteboard].string = self.report;
+}
+@end
+
+static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
+                                      NSString *report) {
+    YTABCDiagnosticsReportViewController *detail =
+        [[YTABCDiagnosticsReportViewController alloc] initWithTitle:title report:report];
+    if (owner.navigationController) {
+        [owner.navigationController pushViewController:detail animated:YES];
+    } else {
+        YTABCShowNotice(owner, title, report);
+    }
+}
+
 @interface YTABCNativeMenusViewController : UITableViewController
 @property(nonatomic, weak) id settingsOwner;
 @property(nonatomic, strong) NSArray<NSDictionary *> *sections;
@@ -157,8 +211,8 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
         @{
             @"title": @"Native Settings categories and rows",
             @"rows": @[
-                @{@"title": @"Inspect hidden headers and Settings rows",
-                  @"subtitle": @"Browse real loaded category IDs and section items; unavailable server rows are not invented",
+                @{@"title": @"Inspect loaded Settings rows (read-only)",
+                  @"subtitle": @"Real category IDs, hidden-header states and loaded items; no account or server-row bypass",
                   @"kind": @"settingsHidden"}
             ]
         }
@@ -352,7 +406,10 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
     for (NSString *key in [[snapshot allKeys] sortedArrayUsingSelector:@selector(compare:)])
         [lines addObject:[NSString stringWithFormat:@"%@ = %@", key, snapshot[key]]];
     [lines addObject:@"\nBadge and opt-in state are read from the most recently bound native study cell. No study rows means these values are not evidence of eligibility."];
-    YTABCShowNotice(self, @"Native study layout and controls", [lines componentsJoinedByString:@"\n"]);
+    if ([snapshot[@"studyCellEntryBindings"] unsignedIntegerValue] == 0)
+        [lines insertObject:@"NO NATIVE STUDY CELLS OBSERVED. Zero badge / opt-in counters are not evidence of eligibility.\n" atIndex:0];
+    YTABCPushDiagnosticsReport(self, @"Native study diagnostics",
+                              [lines componentsJoinedByString:@"\n"]);
 }
 
 - (void)showExperimentsHealth {
@@ -371,7 +428,14 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
             [lines addObject:[NSString stringWithFormat:@"%@ = %@", key, network[key]]];
     }
     [lines addObject:@"\nAn empty result does not identify a specific server gate. Check whether search ran and whether result sections arrived."];
-    YTABCShowNotice(self, @"Experiments initialization", [lines componentsJoinedByString:@"\n"]);
+    if (![ui[@"rootCurrentlyAlive"] boolValue])
+        [lines insertObject:@"No living native experiments controller. Open the native launcher before retrying.\n" atIndex:0];
+    else if ([ui[@"makeSearchCalls"] unsignedIntegerValue] == 0)
+        [lines insertObject:@"A native controller was observed but no native experiment search call was observed.\n" atIndex:0];
+    else if ([ui[@"resultsAddSectionsCalls"] unsignedIntegerValue] == 0)
+        [lines insertObject:@"Native search was observed but no result-section update was observed.\n" atIndex:0];
+    YTABCPushDiagnosticsReport(self, @"Experiments diagnostics",
+                              [lines componentsJoinedByString:@"\n"]);
 }
 
 - (void)showInventory:(NSString *)kind {
@@ -402,7 +466,7 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
         classes = @[@"YTWatchDebugOverlayController",
                     @"YTPlaybackDebugOverlayController"];
     }
-    YTABCShowNotice(self, title,
+    YTABCPushDiagnosticsReport(self, title,
                     [NSString stringWithFormat:@"%@\n\n"
                         @"Presence does not establish a launchable menu or permission.",
                         YTABCClassReport(classes)]);
