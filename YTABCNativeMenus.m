@@ -5,6 +5,8 @@
 // replaces tokens, fabricates a responder, or assumes that an Objective-C class
 // can be shown just because its name exists in the Mach-O.
 #import "YTABCNativeMenus.h"
+#import "YTABRuntimeBrowserModern.h"
+extern UIViewController *YTABCCreateSettingsRowsInspector(id settingsOwner);
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <substrate.h>
@@ -72,6 +74,7 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
 @property(nonatomic, weak) id settingsOwner;
 @property(nonatomic, strong) NSArray<NSDictionary *> *sections;
 - (instancetype)initWithSettingsOwner:(id)owner;
+- (instancetype)initWithSettingsOwner:(id)owner mode:(NSString *)mode;
 @end
 
 @implementation YTABCNativeMenusViewController
@@ -143,12 +146,43 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
                 @{@"title": @"Developer / QA inventory",
                   @"subtitle": @"Check settings and command entry points (read only)",
                   @"kind": @"developer"},
+                @{@"title": @"Open captured config flags",
+                  @"subtitle": @"Original YTGlobalConfig / YTColdConfig / YTHotConfig BOOLs and current overrides",
+                  @"kind": @"configFlags"},
                 @{@"title": @"YouTube config inventory",
                   @"subtitle": @"Cold, Hot, Global and flag-ID infrastructure (read only)",
                   @"kind": @"config"}
             ]
+        },
+        @{
+            @"title": @"Native Settings categories and rows",
+            @"rows": @[
+                @{@"title": @"Inspect hidden headers and Settings rows",
+                  @"subtitle": @"Browse real loaded category IDs and section items; unavailable server rows are not invented",
+                  @"kind": @"settingsHidden"}
+            ]
         }
     ];
+    return self;
+}
+
+// Direct submenus from YouTube Settings. Avoid burying native launchers
+// inside a huge diagnostics-only catalog.
+- (instancetype)initWithSettingsOwner:(id)owner mode:(NSString *)mode {
+    self = [self initWithSettingsOwner:owner];
+    if (!self || !mode.length) return self;
+    NSUInteger index = NSNotFound;
+    if ([mode isEqualToString:@"experiments"]) index = 0;
+    else if ([mode isEqualToString:@"debug"]) index = 1;
+    else if ([mode isEqualToString:@"configs"]) index = 2;
+    else if ([mode isEqualToString:@"hidden"]) index = 3;
+    if (index != NSNotFound && index < self.sections.count) {
+        self.sections = @[self.sections[index]];
+        self.title = @{@"experiments": @"Native Experiments",
+                       @"debug": @"Debug & QA",
+                       @"configs": @"Native Configs",
+                       @"hidden": @"Settings / Hidden Rows"}[mode];
+    }
     return self;
 }
 
@@ -403,6 +437,12 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
         }
     } else if ([kind isEqualToString:@"controller"]) {
         [self pushNativeController:entry[@"class"]];
+    } else if ([kind isEqualToString:@"configFlags"]) {
+        [self.navigationController pushViewController:
+            [YTABRuntimeBrowserModernViewController new] animated:YES];
+    } else if ([kind isEqualToString:@"settingsHidden"]) {
+        [self.navigationController pushViewController:
+            YTABCCreateSettingsRowsInspector(owner) animated:YES];
     } else if ([kind isEqualToString:@"playback"]) {
         [self togglePlaybackOverlay];
     } else if ([kind isEqualToString:@"creation"]) {
@@ -414,7 +454,7 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
 
 @end
 
-BOOL YTABCPushNativeMenuHub(id settingsViewController) {
+static BOOL YTABCPushNativeMenuHubWithMode(id settingsViewController, NSString *mode) {
     if (![NSThread isMainThread]) {
         NSLog(@"[YTABC NativeMenus] Refusing off-main UIKit navigation");
         return NO;
@@ -424,7 +464,7 @@ BOOL YTABCPushNativeMenuHub(id settingsViewController) {
     // Keep study hooks out of %ctor / cold start.
     YTABCInstallNativeStudyControlsHooks();
     YTABCNativeMenusViewController *menu =
-        [[YTABCNativeMenusViewController alloc] initWithSettingsOwner:settingsViewController];
+        [[YTABCNativeMenusViewController alloc] initWithSettingsOwner:settingsViewController mode:mode];
     SEL push = NSSelectorFromString(@"pushViewController:");
     @try {
         if ([settingsViewController respondsToSelector:push]) {
@@ -444,4 +484,12 @@ BOOL YTABCPushNativeMenuHub(id settingsViewController) {
         NSLog(@"[YTABC NativeMenus] Navigation failed: %@", e.reason);
     }
     return NO;
+}
+
+BOOL YTABCPushNativeMenuHub(id settingsViewController) {
+    return YTABCPushNativeMenuHubWithMode(settingsViewController, nil);
+}
+
+BOOL YTABCPushNativeMenuHubForCategory(id settingsViewController, NSString *category) {
+    return YTABCPushNativeMenuHubWithMode(settingsViewController, category);
 }
