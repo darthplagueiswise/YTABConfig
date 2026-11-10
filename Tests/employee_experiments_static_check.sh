@@ -28,6 +28,18 @@ require_text YTABCNativeMenus.m 'id responder = owner;'
 require_text YTABCNativeMenus.m 'YTSettingsExperimentsViewController'
 require_text YTABCNativeMenus.m 'YTSettingsExperimentsResultsViewController'
 require_text Makefile 'YTABNativeExperimentsHealth.m'
+require_text Makefile 'YTABNativeStudyControls.m'
+require_text YTNativeExperiments.x 'YTABCInstallNativeStudyControlsHooks();'
+require_text YTABCNativeMenus.m 'YTABCCopyNativeStudyControls()'
+require_text YTABNativeStudyControls.m '"YTSettingsExperimentStudyHeader", "resetLayout", "v16@0:8"'
+require_text YTABNativeStudyControls.m '"YTSettingsExperimentStudyItemCell", "resetLayout", "v16@0:8"'
+require_text YTABNativeStudyControls.m '"YTSettingsExperimentStudyItemCell", "setEntry:", "v24@0:8@16"'
+require_text YTABNativeStudyControls.m '"YTSettingsExperimentStudyItemCellController", "didToggleSwitch", "v16@0:8"'
+require_text YTABNativeStudyControls.m '"YTSettingsExperimentStudyItemCellController", "showAlertForJoiningExperiment", "v16@0:8"'
+require_text YTABNativeStudyControls.m '"YTSettingsExperimentStudySectionController", "updateHeader:", "v24@0:8@16"'
+require_text YTABNativeStudyControls.m '"YTSettingsExperimentStudySectionController", "handleEntries:", "v24@0:8@16"'
+require_text YTABNativeStudyControls.m 'sOriginalSetEntry(instance, selector, entry);'
+reject_text Tweak.x 'YTABCInstallNativeStudyControlsHooks();'
 # Crash reports: YTInnerTubeCoreDataContext.init -> DataLibDataModel model load
 # on the main thread. A targeted fallback is safer than suppressing CoreData
 # exceptions or modifying unrelated model initializers.
