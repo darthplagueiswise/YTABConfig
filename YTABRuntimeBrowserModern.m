@@ -2,6 +2,11 @@
 #import <objc/message.h>
 #import <objc/runtime.h>
 
+// State is owned by the runtime hook engine, never duplicated in a UI cache.
+extern BOOL YTABRuntimeBrowserApplyMode(NSString *patchKey, NSInteger mode);
+extern NSNumber *YTABRuntimeBrowserNativeSample(NSString *patchKey);
+extern BOOL YTABRuntimeBrowserPatchInstalled(NSString *patchKey);
+
 static NSString * const YTABModernOverridesKey = @"YTABCRuntimeBrowserOverrides";
 static const void *YTABModernPatchKeyAssociation = &YTABModernPatchKeyAssociation;
 
@@ -31,27 +36,8 @@ static YTABModernPatchMode YTABModernModeForKey(NSString *patchKey) {
     return override.boolValue ? YTABModernPatchModeForceOn : YTABModernPatchModeForceOff;
 }
 
-static void YTABModernSetModeForKey(YTABModernPatchMode mode, NSString *patchKey) {
-    if (!patchKey.length) return;
-    NSMutableDictionary<NSString *, NSNumber *> *overrides =
-        [YTABModernStoredOverrides() mutableCopy];
-    switch (mode) {
-        case YTABModernPatchModeForceOff:
-            overrides[patchKey] = @NO;
-            break;
-        case YTABModernPatchModeForceOn:
-            overrides[patchKey] = @YES;
-            break;
-        case YTABModernPatchModeSystem:
-        default:
-            [overrides removeObjectForKey:patchKey];
-            break;
-    }
-    [[NSUserDefaults standardUserDefaults] setObject:overrides.copy
-                                              forKey:YTABModernOverridesKey];
-    // Refreshes the engine cache and installs only newly persisted selectors.
-    // Removing a key makes an existing wrapper pass through the original value.
-    YTABRuntimeBrowserReinstallPersistedHooks();
+static BOOL YTABModernSetModeForKey(YTABModernPatchMode mode, NSString *patchKey) {
+    return YTABRuntimeBrowserApplyMode(patchKey, mode);
 }
 
 static NSString *YTABModernStringValue(id object, NSString *key) {
@@ -107,33 +93,38 @@ static UITableViewCell *YTABModernEngineCell(id controller,
     _selectorLabel.numberOfLines = 0;
     _selectorLabel.lineBreakMode = NSLineBreakByCharWrapping;
     if (@available(iOS 13.0, *)) {
-        _selectorLabel.font = [UIFont monospacedSystemFontOfSize:15.0
-                                                        weight:UIFontWeightMedium];
+        _selectorLabel.font = [UIFont monospacedSystemFontOfSize:13.0
+                                                        weight:UIFontWeightRegular];
     } else {
-        _selectorLabel.font = [UIFont systemFontOfSize:15.0 weight:UIFontWeightMedium];
+        _selectorLabel.font = [UIFont systemFontOfSize:13.0 weight:UIFontWeightRegular];
     }
 
     _ownerLabel = [UILabel new];
-    _ownerLabel.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightSemibold];
+    _ownerLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
     _ownerLabel.textColor = UIColor.secondaryLabelColor;
     _ownerLabel.numberOfLines = 2;
     _ownerLabel.lineBreakMode = NSLineBreakByCharWrapping;
 
     _statusLabel = [UILabel new];
-    _statusLabel.font = [UIFont systemFontOfSize:12.0 weight:UIFontWeightRegular];
+    _statusLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
     _statusLabel.textColor = UIColor.secondaryLabelColor;
     _statusLabel.numberOfLines = 2;
 
     _encodingLabel = [UILabel new];
     if (@available(iOS 13.0, *)) {
-        _encodingLabel.font = [UIFont monospacedSystemFontOfSize:10.5
+        _encodingLabel.font = [UIFont monospacedSystemFontOfSize:10.0
                                                          weight:UIFontWeightRegular];
     } else {
-        _encodingLabel.font = [UIFont systemFontOfSize:10.5];
+        _encodingLabel.font = [UIFont systemFontOfSize:10.0];
     }
     _encodingLabel.textColor = UIColor.tertiaryLabelColor;
     _encodingLabel.numberOfLines = 2;
     _encodingLabel.lineBreakMode = NSLineBreakByCharWrapping;
+
+    _selectorLabel.adjustsFontForContentSizeCategory = YES;
+    _ownerLabel.adjustsFontForContentSizeCategory = YES;
+    _statusLabel.adjustsFontForContentSizeCategory = YES;
+    _encodingLabel.adjustsFontForContentSizeCategory = YES;
 
     _modeControl = [[UISegmentedControl alloc]
         initWithItems:@[@"System", @"Force OFF", @"Force ON"]];
@@ -144,10 +135,10 @@ static UITableViewCell *YTABModernEngineCell(id controller,
         _selectorLabel, _ownerLabel, _statusLabel, _encodingLabel, _modeControl
     ]];
     stack.axis = UILayoutConstraintAxisVertical;
-    stack.spacing = 5.0;
+    stack.spacing = 3.0;
     stack.translatesAutoresizingMaskIntoConstraints = NO;
     stack.layoutMarginsRelativeArrangement = YES;
-    stack.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(11.0, 16.0, 11.0, 16.0);
+    stack.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(9.0, 16.0, 9.0, 16.0);
     [self.contentView addSubview:stack];
 
     [NSLayoutConstraint activateConstraints:@[
@@ -163,12 +154,20 @@ static UITableViewCell *YTABModernEngineCell(id controller,
 
 @end
 
-@interface YTABRuntimeBrowserModernViewController ()
+@interface YTABRuntimeBrowserModernViewController () <UISearchBarDelegate>
 @property(nonatomic, strong) UIView *scopeHeaderView;
 @property(nonatomic, strong) UILabel *scopeHeaderLabel;
+@property(nonatomic, strong) UISearchBar *pinnedSearchBar;
 @end
 
 @implementation YTABRuntimeBrowserModernViewController
+
+// Plain tables keep the section header pinned when the method list scrolls.
+// Inset-grouped headers and iOS 26's automatic toolbar search can disappear
+// behind YouTube's custom settings navigation container.
+- (instancetype)init {
+    return [super initWithStyle:UITableViewStylePlain];
+}
 
 - (NSArray *)ytab_visibleMethods {
     @try {
@@ -187,90 +186,106 @@ static UITableViewCell *YTABModernEngineCell(id controller,
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-
     self.title = @"Runtime Patches";
     self.navigationItem.titleView = nil;
     self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
     self.tableView.rowHeight = UITableViewAutomaticDimension;
-    self.tableView.estimatedRowHeight = 132.0;
-    self.tableView.separatorInset = UIEdgeInsetsMake(0.0, 16.0, 0.0, 16.0);
-    if (@available(iOS 15.0, *)) self.tableView.sectionHeaderTopPadding = 8.0;
+    self.tableView.estimatedRowHeight = 104.0;
+    self.tableView.separatorInset = UIEdgeInsetsMake(0, 16, 0, 16);
+    self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
+    self.definesPresentationContext = YES;
 
-    UISearchController *searchController = self.navigationItem.searchController;
-    searchController.hidesNavigationBarDuringPresentation = NO;
-    self.navigationItem.hidesSearchBarWhenScrolling = NO;
-    if (@available(iOS 16.0, *)) {
-        self.navigationItem.preferredSearchBarPlacement = UINavigationItemSearchBarPlacementStacked;
-    }
-    SEL toolbarIntegration = NSSelectorFromString(@"setSearchBarPlacementAllowsToolbarIntegration:");
-    if ([self.navigationItem respondsToSelector:toolbarIntegration]) {
-        ((void (*)(id, SEL, BOOL))objc_msgSend)(self.navigationItem, toolbarIntegration, NO);
-    }
-    SEL externalIntegration = NSSelectorFromString(@"setSearchBarPlacementAllowsExternalIntegration:");
-    if ([self.navigationItem respondsToSelector:externalIntegration]) {
-        ((void (*)(id, SEL, BOOL))objc_msgSend)(self.navigationItem, externalIntegration, NO);
-    }
+    // Always-visible native search. YouTube's navigation wrapper can collapse
+    // the UINavigationItem-integrated search field, so retain the native
+    // UISearchBar but present it in a pinned *plain table section header*.
+    UISearchBar *search = self.searchController.searchBar;
+    self.navigationItem.searchController = nil;
+    [search removeFromSuperview];
+    search.delegate = self;
+    search.placeholder = @"Class or selector";
+    search.searchBarStyle = UISearchBarStyleMinimal;
+    search.autocorrectionType = UITextAutocorrectionTypeNo;
+    search.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    self.pinnedSearchBar = search;
 
-    UISegmentedControl *scopeControl = nil;
+    UISegmentedControl *scope = nil;
     @try {
         id value = [self valueForKey:@"scopeControl"];
-        if ([value isKindOfClass:UISegmentedControl.class]) scopeControl = value;
+        if ([value isKindOfClass:UISegmentedControl.class]) scope = value;
     } @catch (__unused NSException *exception) {}
+    [scope removeFromSuperview];
 
-    [scopeControl removeFromSuperview];
-    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0.0, 0.0, 320.0, 70.0)];
-    header.backgroundColor = UIColor.clearColor;
+    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, 102)];
+    header.backgroundColor = [UIColor systemBackgroundColor];
+    [header addSubview:search];
 
-    UILabel *scopeLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    scopeLabel.text = @"Source image";
-    scopeLabel.font = [UIFont systemFontOfSize:12.0 weight:UIFontWeightSemibold];
-    scopeLabel.textColor = UIColor.secondaryLabelColor;
-    [header addSubview:scopeLabel];
-    if (scopeControl) [header addSubview:scopeControl];
-
+    UILabel *sourceLabel = [UILabel new];
+    sourceLabel.text = @"SOURCE";
+    sourceLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption2];
+    sourceLabel.textColor = [UIColor secondaryLabelColor];
+    sourceLabel.adjustsFontForContentSizeCategory = YES;
+    [header addSubview:sourceLabel];
+    if (scope) [header addSubview:scope];
     self.scopeHeaderView = header;
-    self.scopeHeaderLabel = scopeLabel;
-    self.tableView.tableHeaderView = header;
+    self.scopeHeaderLabel = sourceLabel;
+    // Do not set tableHeaderView: it would scroll the search out of sight.
+    self.tableView.tableHeaderView = nil;
 
-    UIImage *trashImage = nil;
-    if (@available(iOS 13.0, *)) trashImage = [UIImage systemImageNamed:@"trash"];
-    self.navigationItem.rightBarButtonItem = trashImage
-        ? [[UIBarButtonItem alloc] initWithImage:trashImage
+    UIImage *trash = nil;
+    if (@available(iOS 13.0, *)) trash = [UIImage systemImageNamed:@"trash"];
+    self.navigationItem.rightBarButtonItem = trash
+        ? [[UIBarButtonItem alloc] initWithImage:trash
                                           style:UIBarButtonItemStylePlain
-                                         target:self
-                                         action:@selector(clearOverrides)]
+                                         target:self action:@selector(clearOverrides)]
         : [[UIBarButtonItem alloc] initWithTitle:@"Clear"
                                           style:UIBarButtonItemStylePlain
-                                         target:self
-                                         action:@selector(clearOverrides)];
+                                         target:self action:@selector(clearOverrides)];
     self.navigationItem.rightBarButtonItem.accessibilityLabel = @"Clear saved runtime patches";
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    // Preserve UIKit's system navigation material; never install a custom
+    // translucent/blur overlay that hides the toolbar or clips search.
+    self.navigationItem.titleView = nil;
+    self.navigationItem.hidesSearchBarWhenScrolling = NO;
 }
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     UIView *header = self.scopeHeaderView;
     if (!header) return;
-
     CGFloat width = CGRectGetWidth(self.tableView.bounds);
-    header.frame = CGRectMake(0.0, 0.0, width, 70.0);
-    self.scopeHeaderLabel.frame = CGRectMake(20.0, 6.0, MAX(0.0, width - 40.0), 18.0);
-
-    UISegmentedControl *scopeControl = nil;
+    header.frame = CGRectMake(0, 0, width, 102);
+    self.pinnedSearchBar.frame = CGRectMake(8, 0, MAX(0, width - 16), 52);
+    self.scopeHeaderLabel.frame = CGRectMake(20, 52, MAX(0, width - 40), 14);
+    UISegmentedControl *scope = nil;
     @try {
         id value = [self valueForKey:@"scopeControl"];
-        if ([value isKindOfClass:UISegmentedControl.class]) scopeControl = value;
+        if ([value isKindOfClass:UISegmentedControl.class]) scope = value;
     } @catch (__unused NSException *exception) {}
-    scopeControl.frame = CGRectMake(16.0, 28.0, MAX(0.0, width - 32.0), 32.0);
+    scope.frame = CGRectMake(16, 66, MAX(0, width - 32), 31);
+}
 
-    if (self.tableView.tableHeaderView != header) self.tableView.tableHeaderView = header;
+- (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText {
+    (void)searchBar; (void)searchText;
+    // The parent runtime engine owns filtering, and uses this exact searchBar.
+    [self applyFilter];
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
+    (void)tableView; (void)section;
+    return 102.0;
+}
+
+- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
+    (void)tableView; (void)section;
+    return self.scopeHeaderView;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
-    (void)tableView;
-    (void)section;
-    return [NSString stringWithFormat:@"%lu methods · %lu saved patches",
-            (unsigned long)[self ytab_visibleMethods].count,
-            (unsigned long)YTABRuntimeBrowserPersistedOverrideCount()];
+    (void)tableView; (void)section;
+    return nil; // pinned search + scope is the complete section header
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
@@ -314,7 +329,18 @@ static UITableViewCell *YTABModernEngineCell(id controller,
     if (classPrefix.length && [engineStatus hasPrefix:classPrefix]) {
         engineStatus = [engineStatus substringFromIndex:classPrefix.length];
     }
-    cell.statusLabel.text = engineStatus.length ? engineStatus : @"native —";
+    NSNumber *nativeSample = YTABRuntimeBrowserNativeSample(patchKey);
+    NSNumber *savedOverride = YTABModernStoredOverrides()[patchKey];
+    BOOL installed = YTABRuntimeBrowserPatchInstalled(patchKey);
+    NSString *nativeText = nativeSample ? (nativeSample.boolValue ? @"ON" : @"OFF") : @"not sampled";
+    NSString *effectiveText = savedOverride
+        ? (installed ? (savedOverride.boolValue ? @"ON" : @"OFF") : @"pending / unavailable")
+        : nativeText;
+    cell.statusLabel.text = [NSString stringWithFormat:
+        @"Native: %@  ·  Effective: %@  ·  %@",
+        nativeText, effectiveText, savedOverride ? (installed ? @"Patch active" : @"Patch not installed") : @"System"];
+    cell.statusLabel.textColor = savedOverride && installed
+        ? [UIColor labelColor] : [UIColor secondaryLabelColor];
     cell.encodingLabel.text = [NSString stringWithFormat:@"%@\n%@",
                                typeEncoding ?: @"", patchKey ?: @""];
 
@@ -340,7 +366,18 @@ static UITableViewCell *YTABModernEngineCell(id controller,
     NSString *patchKey = objc_getAssociatedObject(sender, YTABModernPatchKeyAssociation);
     if (!patchKey.length) return;
 
-    YTABModernSetModeForKey((YTABModernPatchMode)sender.selectedSegmentIndex, patchKey);
+    YTABModernPatchMode requestedMode = (YTABModernPatchMode)sender.selectedSegmentIndex;
+    if (!YTABModernSetModeForKey(requestedMode, patchKey)) {
+        sender.selectedSegmentIndex = YTABModernModeForKey(patchKey);
+        UIAlertController *error = [UIAlertController
+            alertControllerWithTitle:@"Patch unavailable"
+            message:@"The selected method could not be hooked in this build. The saved setting was not changed."
+            preferredStyle:UIAlertControllerStyleAlert];
+        [error addAction:[UIAlertAction actionWithTitle:@"OK"
+            style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:error animated:YES completion:nil];
+        return;
+    }
     UISelectionFeedbackGenerator *feedback = [UISelectionFeedbackGenerator new];
     [feedback selectionChanged];
     [self.tableView reloadData];
