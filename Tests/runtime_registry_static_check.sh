@@ -180,7 +180,15 @@ require_text YTABRuntimeBrowserModern.m "viewForHeaderInSection:"
 require_text YTABRuntimeBrowser.m "- (NSString *)ytab_currentSearchText"
 require_text YTABRuntimeBrowser.m "YTABRuntimeSearchTokens([self ytab_currentSearchText])"
 require_text YTABRuntimeBrowserModern.m 'UISearchBar *search = [[UISearchBar alloc] initWithFrame:CGRectZero]'
-require_text YTABRuntimeBrowserModern.m 'return self.pinnedSearchBar.text ?: @"";'
+# Native iOS 26 search must be hosted by the system toolbar for Liquid Glass morphing.
+require_text YTABRuntimeBrowser.m "- (UISearchController *)ytab_ownedSearchController"
+require_text YTABRuntimeBrowserModern.m "UINavigationItemSearchBarPlacementIntegrated"
+require_text YTABRuntimeBrowserModern.m "searchBarPlacementAllowsToolbarIntegration = YES"
+require_text YTABRuntimeBrowserModern.m "searchBarPlacementBarButtonItem"
+require_text YTABRuntimeBrowserModern.m "self.navigationItem.searchController = nativeSearch;"
+require_text YTABRuntimeBrowserModern.m "self.toolbarItems = @[searchItem];"
+require_text YTABRuntimeBrowserModern.m "setToolbarHidden:NO"
+require_text YTABRuntimeBrowserModern.m '(self.pinnedSearchBar.text ?: @"")'
 require_text YTABRuntimeBrowserModern.m '[self applyFilter];'
 reject_text YTABRuntimeBrowserModern.m "self.navigationItem.searchController.searchBar"
 reject_text YTABRuntimeBrowserModern.m "[search removeFromSuperview]"
