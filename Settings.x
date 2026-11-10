@@ -360,8 +360,23 @@ BOOL YTABResetAllRuntimeOverrides(
             }];
         [sectionItems addObject:nativeTools];
 
-        // Restored concrete native diagnostics. No guessed Employee privileges:
-        // the real classification can be observed, but not fabricated.
+        // Three independent local-only Phenotype overrides. These switches
+        // return YES from the selected Objective-C getter while enabled,
+        // and return the native result when disabled. No network hooks.
+        [sectionItems addObject:YTABCDiagnosticsSwitch(YTSettingsSectionItemClass,
+            @"Force isGooglerAccount: (local)",
+            @"Override this per-account Phenotype getter to YES. Default OFF; native result when OFF.",
+            @"YTABC_FORCE_IS_GOOGLER_LOCAL", @"YTABCForceIsGooglerAccount")];
+        [sectionItems addObject:YTABCDiagnosticsSwitch(YTSettingsSectionItemClass,
+            @"Force hasGooglerAccount (local)",
+            @"Override this aggregate Phenotype getter to YES. Default OFF; native result when OFF.",
+            @"YTABC_FORCE_HAS_GOOGLER_LOCAL", @"YTABCForceHasGooglerAccount")];
+        [sectionItems addObject:YTABCDiagnosticsSwitch(YTSettingsSectionItemClass,
+            @"Force isInternalHeterodyneSyncer (local)",
+            @"Override this local internal-syncer getter to YES. Default OFF; native result when OFF.",
+            @"YTABC_FORCE_INTERNAL_SYNCER_LOCAL", @"YTABCForceStandardInternalSyncer")];
+
+        // Native diagnostics keep the original and effective values separate.
         [sectionItems addObject:YTABCDiagnosticsSwitch(YTSettingsSectionItemClass,
             @"Trace native Phenotype sync and classification",
             @"Observe genuine Googler/internal checks and Heterodyne sync events. No account or token overrides.",
@@ -381,7 +396,7 @@ BOOL YTABResetAllRuntimeOverrides(
 
         YTSettingsSectionItem *nativeStatus = [YTSettingsSectionItemClass
             itemWithTitle:@"Native Phenotype / Experiments status"
-            titleDescription:@"Show observed native calls, hook count, and unchanged Googler classification"
+            titleDescription:@"Show observed native/effective toggles, call counts and installed hooks"
             accessibilityIdentifier:@"YTABC_NATIVE_DIAGNOSTIC_STATUS"
             detailTextBlock:nil
             selectBlock:^BOOL (YTSettingsCell *cell, NSUInteger argument) {
