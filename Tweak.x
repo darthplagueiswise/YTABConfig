@@ -11,6 +11,7 @@ extern pthread_mutex_t cacheMutex;
 NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *cache;
 
 extern void SearchHook(void);
+extern void YTABCInstallNativeDiagnostics(void);
 extern BOOL tweakEnabled(void);
 extern BOOL groupedSettings(void);
 extern void updateAllKeys(void);
@@ -87,6 +88,7 @@ static void hookClass(NSObject *instance) {
 - (BOOL)application:(id)application didFinishLaunchingWithOptions:(id)options {
     // Observe native UI components without modifying account eligibility.
     YTABCInstallNativeMenuObservationHooks();
+    YTABCInstallNativeDiagnostics();
 
     if (tweakEnabled()) {
         updateAllKeys();
@@ -131,6 +133,7 @@ static void hookClass(NSObject *instance) {
 
     // Attempt registration here and again during the app delegate launch.
     YTABCInstallNativeMenuObservationHooks();
+    YTABCInstallNativeDiagnostics();
 
     cache = [NSMutableDictionary new];
     excludedPrefixes = [NSSet setWithArray:@[
