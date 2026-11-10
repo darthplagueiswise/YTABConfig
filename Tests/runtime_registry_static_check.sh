@@ -143,14 +143,22 @@ require_text YTABRuntimeBrowser.m "MSHookMessageEx(hookClass, selector, replacem
 require_text YTABRuntimeBrowser.m "YTABCRuntimeBrowserOverrides"
 require_text YTABRuntimeBrowser.m "YTABRuntimeArgumentKindObject"
 require_text YTABRuntimeBrowser.m "YTABRuntimeArgumentKindInteger"
-require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeYouTube"
-require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeModule"
-# The Frameworks tab means every currently loaded app-bundled framework,
-# not only the optional Module_Framework binary.
-require_text YTABRuntimeBrowser.m 'stringByAppendingPathComponent:@"Frameworks"'
-require_text YTABRuntimeBrowser.m '[imageName hasPrefix:frameworksRoot]'
-require_text YTABRuntimeBrowser.m '@"YouTube", @"Frameworks", @"All"'
-reject_text YTABRuntimeBrowser.m '[imageName containsString:@"/Module_Framework.framework/"]'
+# Exactly known capture-backed config flags are separated from methods.
+require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeFlags"
+require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeMethods"
+require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeOverrides"
+require_text YTABRuntimeBrowser.m '@"Flags", @"Methods", @"Overrides"'
+require_text YTABRuntimeBrowser.m "YTABCRuntimeValuesSnapshot()"
+require_text YTABRuntimeBrowser.m "YTABCNativeValue(cls, selector)"
+require_text YTABRuntimeBrowser.m "YTABCOverrideValue(cls, selector)"
+require_text YTABRuntimeBrowser.m "YTABCSetOverride(cls, selector, mode == 2)"
+require_text YTABRuntimeBrowser.m "YTABCClearOverride(cls, selector)"
+require_text YTABRuntimeBrowser.m "YTABRuntimeBrowserOverrideValue(NSString *patchKey)"
+require_text YTABRuntimeBrowser.m "YTABRuntimeIsMainExecutableClass(cls)"
+require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserOverrideValue(patchKey)"
+require_text YTABRuntimeBrowserModern.m "original captured at launch"
+reject_text YTABRuntimeBrowser.m '@"YouTube", @"Frameworks", @"All"'
+reject_text YTABRuntimeBrowser.m "[imageName hasPrefix:frameworksRoot]"
 require_text YTABRuntimeBrowser.m '@"YTGlobalConfig", @"YTColdConfig", @"YTHotConfig"'
 require_text YTABRuntimeBrowserHooks.x "YTABRuntimeBrowserReinstallPersistedHooks();"
 reject_text YTABRuntimeBrowser.m "MSHookFunction"
@@ -215,7 +223,7 @@ require_text YTABRuntimeBrowserModern.m "UIFontTextStyleSubheadline"
 require_text YTABRuntimeBrowserModern.m "UIFontTextStyleCaption2"
 reject_text YTABRuntimeBrowserModern.m "monospacedSystemFontOfSize:15.0"
 require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserReinstallPersistedHooks();"
-require_text YTABRuntimeBrowserModern.m "Scope: YouTube = main binary; Frameworks"
+require_text YTABRuntimeBrowserModern.m "Flags: original config BOOLs captured at launch"
 reject_text YTABRuntimeBrowserModern.m "UIAlertControllerStyleActionSheet"
 
 browser_retry_count="$(grep -Fc 'YTABRuntimeBrowserReinstallPersistedHooks();' YTABRuntimeBrowserHooks.x)"
