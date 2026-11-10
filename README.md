@@ -129,6 +129,50 @@ native study-header layout definition with `root`, `layerLabel`,
 `titleLabel`, `disclosureArrow`, and `linkLabel`. It is not the
 CoreData model and supplies no experiment query parameters or auth gates.
 
+## Audited study layouts and live study controls (YouTube 21.43.5)
+
+Both resources are loaded by original app classes, as established from ARM64
+XREFs into the Mach-O CFString table (not only by scanning names):
+
+- `settings_experiments_study_header.flexb` CFString `0x10bb485c0`:
+  `YTSettingsExperimentStudyHeader -resetLayout` at `0x10143197c`
+  uses ADRP `0x1014319b8` + ADD `0x1014319bc`.
+- `settings_experiments_study_item_cell.flexb` CFString `0x10bb485e0`:
+  `YTSettingsExperimentStudyItemCell -resetLayout` at `0x10143243c`
+  uses ADRP `0x101432498` + ADD `0x10143249c`.
+  It selects `shortCell` (`0x10bb48600`) or `regularCell`
+  (`0x10bb48620`) based on the cell's native method result.
+
+The native ownership path is:
+`YTSettingsExperimentStudySectionController -handleEntries:`
+(`0x101432eb0`) -> `-createCellControllerForEntry:` (`0x101432f18`)
+-> `YTSettingsExperimentStudyItemCellController -initWithEntry:parentResponder:`
+(`0x101432644`) -> `YTSettingsExperimentStudyItemCell -setEntry:`
+(`0x1014320c4`). Header updates use
+`YTSettingsExperimentStudySectionController -updateHeader:` (`0x101433038`).
+Study selection and opt-in are handled by native
+`YTSettingsExperimentStudyItemCellController -didToggleSwitch`
+(`0x101432990`) and `-showAlertForJoiningExperiment`
+(`0x101432ab8`). The cell exposes `studyIneligibleBadge` and `optInButton`;
+that is UI state, not proof of a particular server eligibility gate.
+
+`YTABNativeStudyControls.m` instruments those actual methods with exact
+Objective-C ABI checks and calls each original. Hooks are installed lazily
+only when opening the experiments menu, not during YouTube cold start.
+The Native Tools row **Study layout, badge & opt-in state** shows the
+rendered item count, most recently bound cell's actual badge/opt-in
+visibility/enabled/on state and count of user-triggered opt-in callbacks.
+The module never creates a fake study, changes eligibility or supplies
+a fabricated server response.
+
+**Runtime search regression fixed:** The old modern Runtime Patch Browser
+reparented `UISearchController.searchBar` into a `UITableView` header while
+keeping the filter bound to the search controller's lifecycle. Its replacement
+creates an independent `UISearchBar`, keeps it in the pinned plain-table
+section header, and feeds `searchBar:textDidChange:` into the base engine via
+the overridden `ytab_currentSearchText`. Filtering therefore uses exactly
+the visible search field and does not depend on UISearchController activation.
+
 ## Native experiments empty screen / runtime UI corrections
 
 The extracted YouTube 21.43.5 ARM64 image confirms that
