@@ -12,6 +12,8 @@
 extern NSDictionary<NSString *, id> *YTABCCopyNativeExperimentsHealth(void);
 extern NSDictionary<NSString *, id> *YTABCCopyNativeDiagnostics(void);
 extern BOOL YTABCRetryNativeExperimentsSelectedTab(void);
+extern void YTABCInstallNativeStudyControlsHooks(void);
+extern NSDictionary<NSString *, id> *YTABCCopyNativeStudyControls(void);
 
 static __weak id sYTABCObservedPlaybackOverlay;
 static void (*sYTABCOriginalInstallGesture)(id, SEL);
@@ -89,6 +91,9 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
                 @{@"title": @"Retry current native experiments tab",
                   @"subtitle": @"Ask the real view controller to reload its selected tab",
                   @"kind": @"experimentsRetry"},
+                @{@"title": @"Study layout, badge & opt-in state",
+                  @"subtitle": @"Real native .flexb layout calls, study rows, ineligible badge, and opt-in switch callbacks",
+                  @"kind": @"studyControlsHealth"},
                 @{@"title": @"Studies (original navigation)",
                   @"subtitle": @"YTSettingsExperimentsTopViewController, via the existing native opener",
                   @"kind": @"studies",
@@ -307,6 +312,15 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
     }
 }
 
+- (void)showNativeStudyControls {
+    NSDictionary<NSString *, id> *snapshot = YTABCCopyNativeStudyControls() ?: @{};
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    for (NSString *key in [[snapshot allKeys] sortedArrayUsingSelector:@selector(compare:)])
+        [lines addObject:[NSString stringWithFormat:@"%@ = %@", key, snapshot[key]]];
+    [lines addObject:@"\nBadge and opt-in state are read from the most recently bound native study cell. No study rows means these values are not evidence of eligibility."];
+    YTABCShowNotice(self, @"Native study layout and controls", [lines componentsJoinedByString:@"\n"]);
+}
+
 - (void)showExperimentsHealth {
     NSDictionary *ui = YTABCCopyNativeExperimentsHealth() ?: @{};
     NSDictionary *network = YTABCCopyNativeDiagnostics() ?: @{};
@@ -368,6 +382,8 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
     id owner = self.settingsOwner;
     if ([kind isEqualToString:@"experimentsHealth"]) {
         [self showExperimentsHealth];
+    } else if ([kind isEqualToString:@"studyControlsHealth"]) {
+        [self showNativeStudyControls];
     } else if ([kind isEqualToString:@"experimentsRetry"]) {
         BOOL queued = YTABCRetryNativeExperimentsSelectedTab();
         YTABCShowNotice(self, @"Native experiments reload", queued
@@ -405,6 +421,8 @@ BOOL YTABCPushNativeMenuHub(id settingsViewController) {
     }
     YTABCInstallNativeMenuObservationHooks();
     if (!settingsViewController) return NO;
+    // Keep study hooks out of %ctor / cold start.
+    YTABCInstallNativeStudyControlsHooks();
     YTABCNativeMenusViewController *menu =
         [[YTABCNativeMenusViewController alloc] initWithSettingsOwner:settingsViewController];
     SEL push = NSSelectorFromString(@"pushViewController:");
