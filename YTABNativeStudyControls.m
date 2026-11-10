@@ -30,7 +30,6 @@ static BOOL sLatestOptInControlEnabled;
 static BOOL sLatestOptInControlOn;
 static NSString *sLatestEntryClass;
 static NSMutableSet<NSString *> *sInstalledStudyHooks;
-static void *sStudyLock;
 
 static id YTABCStudyProperty(id obj, SEL selector) {
     if (!obj || ![obj respondsToSelector:selector]) return nil;
