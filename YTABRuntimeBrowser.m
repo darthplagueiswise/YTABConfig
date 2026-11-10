@@ -1,4 +1,5 @@
 #import "YTABRuntimeBrowser.h"
+#import "RuntimeFlagRegistry.h"
 #import <Foundation/Foundation.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
@@ -7,10 +8,12 @@
 
 static NSString * const YTABRuntimeBrowserOverridesKey = @"YTABCRuntimeBrowserOverrides";
 
+// The IPA bundles sideload tweaks in Frameworks/, so that directory must
+// never be misrepresented as a source of official YouTube Boolean flags.
 typedef NS_ENUM(NSInteger, YTABRuntimeImageScope) {
-    YTABRuntimeImageScopeYouTube = 0,
-    YTABRuntimeImageScopeModule = 1, // all loaded app-bundled frameworks (not just Module_Framework)
-    YTABRuntimeImageScopeAll = 2,
+    YTABRuntimeImageScopeFlags = 0,      // original launch-captured config BOOLs
+    YTABRuntimeImageScopeMethods = 1,    // general runtime methods, not flags
+    YTABRuntimeImageScopeOverrides = 2,  // only overridden entries
 };
 
 typedef NS_ENUM(NSInteger, YTABRuntimeArgumentKind) {
@@ -27,6 +30,7 @@ typedef NS_ENUM(NSInteger, YTABRuntimeArgumentKind) {
 @property(nonatomic, copy) NSString *imageName;
 @property(nonatomic) BOOL classMethod;
 @property(nonatomic) YTABRuntimeArgumentKind argumentKind;
+@property(nonatomic) BOOL configFlag;
 @property(nonatomic, readonly) NSString *patchKey;
 @end
 
@@ -137,6 +141,22 @@ static BOOL YTABRuntimeSelectorAllowed(Method method) {
     return YES;
 }
 
+static BOOL YTABRuntimeIsCapturedConfigKey(NSString *key,
+                                             NSString **sourceClass,
+                                             NSString **sourceSelector) {
+    if (![key isKindOfClass:NSString.class] || [key hasPrefix:@"+"]) return NO;
+    NSRange boundary = [key rangeOfString:@"#"];
+    if (boundary.location == NSNotFound) return NO;
+    NSString *cls = [key substringToIndex:boundary.location];
+    if (![@[@"YTGlobalConfig", @"YTColdConfig", @"YTHotConfig"] containsObject:cls])
+        return NO;
+    NSString *sel = [key substringFromIndex:NSMaxRange(boundary)];
+    if (!sel.length || [sel containsString:@":"]) return NO;
+    if (sourceClass) *sourceClass = cls;
+    if (sourceSelector) *sourceSelector = sel;
+    return YES;
+}
+
 static BOOL YTABRuntimeParsePatchKey(NSString *key,
                                      NSString **className,
                                      NSString **selectorName,
@@ -241,15 +261,35 @@ static BOOL YTABRuntimeSetOverride(NSNumber *value, NSString *key) {
 // Read-only state bridges used by the native UIKit presentation.
 BOOL YTABRuntimeBrowserApplyMode(NSString *patchKey, NSInteger mode) {
     if (mode < 0 || mode > 2) return NO;
+    NSString *cls = nil, *selector = nil;
+    if (YTABRuntimeIsCapturedConfigKey(patchKey, &cls, &selector)) {
+        // Reuse the existing one-time config getter snapshot and override
+        // engine; never hook the same config getter a second time.
+        return mode == 0 ? YTABCClearOverride(cls, selector)
+                         : YTABCSetOverride(cls, selector, mode == 2);
+    }
     NSNumber *value = mode == 0 ? nil : @(mode == 2);
     return YTABRuntimeSetOverride(value, patchKey);
 }
 
 NSNumber *YTABRuntimeBrowserNativeSample(NSString *patchKey) {
+    NSString *cls = nil, *selector = nil;
+    if (YTABRuntimeIsCapturedConfigKey(patchKey, &cls, &selector))
+        return YTABCNativeValue(cls, selector);
     return YTABRuntimeObservedNative(patchKey);
 }
 
+NSNumber *YTABRuntimeBrowserOverrideValue(NSString *patchKey) {
+    NSString *cls = nil, *selector = nil;
+    if (YTABRuntimeIsCapturedConfigKey(patchKey, &cls, &selector))
+        return YTABCOverrideValue(cls, selector);
+    return YTABRuntimeOverrideForKey(patchKey);
+}
+
 BOOL YTABRuntimeBrowserPatchInstalled(NSString *patchKey) {
+    NSString *cls = nil, *selector = nil;
+    if (YTABRuntimeIsCapturedConfigKey(patchKey, &cls, &selector))
+        return YTABCRuntimeHasFlag(cls, selector);
     @synchronized([YTABRuntimeMethod class]) {
         return patchKey.length && [sYTABRuntimeInstalledKeys containsObject:patchKey];
     }
@@ -260,6 +300,9 @@ BOOL YTABRuntimeBrowserPatchInstalled(NSString *patchKey) {
 // fill in a switch state. A getter can depend on receiver / arguments,
 // so the recorded BOOL is the last native result, not a global constant.
 BOOL YTABRuntimeBrowserObserveKey(NSString *patchKey) {
+    NSString *cls = nil, *selector = nil;
+    if (YTABRuntimeIsCapturedConfigKey(patchKey, &cls, &selector))
+        return YTABCRuntimeHasFlag(cls, selector);
     return YTABRuntimeInstallPatchKey(patchKey);
 }
 
@@ -288,88 +331,103 @@ static BOOL YTABRuntimeClassExcluded(NSString *className) {
     return [excluded containsObject:className];
 }
 
-static YTABRuntimeImageScope YTABRuntimeScopeForImageName(NSString *imageName) {
-    if (!imageName.length) return -1;
-    NSBundle *bundle = [NSBundle mainBundle];
-    NSString *mainExecutable = bundle.executablePath;
-    if ([imageName isEqualToString:mainExecutable]) {
-        return YTABRuntimeImageScopeYouTube;
-    }
-
-    // Previous "Module" scope matched exactly ONE optional framework,
-    // while the All tab only combined that one image with the executable.
-    // Match every loaded image under the app's Frameworks directory,
-    // excluding injected tweak and hooking support binaries.
-    NSString *frameworksRoot = [[bundle.bundlePath
-        stringByAppendingPathComponent:@"Frameworks"] stringByAppendingString:@"/"];
-    if ([imageName hasPrefix:frameworksRoot]) {
-        NSString *leaf = imageName.lastPathComponent;
-        if ([leaf isEqualToString:@"YTABConfig.dylib"] ||
-            [leaf isEqualToString:@"CydiaSubstrate"] ||
-            [leaf isEqualToString:@"Substitute"]) return -1;
-        return YTABRuntimeImageScopeModule;
-    }
-    return -1;
-}
-
-static BOOL YTABRuntimeScopeMatches(YTABRuntimeImageScope requested,
-                                    YTABRuntimeImageScope actual) {
-    return requested == YTABRuntimeImageScopeAll || requested == actual;
+// Only the primary YouTube Mach-O is scanned for generic runtime methods.
+// In this sideloaded IPA Frameworks/ contains mostly third-party tweak dylibs
+// and a Widevine DRM binary, not a second catalog of YouTube feature flags.
+static BOOL YTABRuntimeIsMainExecutableClass(Class cls) {
+    const char *path = cls ? class_getImageName(cls) : NULL;
+    if (!path) return NO;
+    NSString *image = [NSString stringWithUTF8String:path];
+    return [image isEqualToString:[NSBundle mainBundle].executablePath];
 }
 
 static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImageScope scope) {
-    unsigned int classCount = 0;
-    Class *classes = objc_copyClassList(&classCount);
-    if (!classes) return @[];
-
     NSMutableArray<YTABRuntimeMethod *> *results = [NSMutableArray array];
     NSMutableSet<NSString *> *seen = [NSMutableSet set];
-    for (unsigned int classIndex = 0; classIndex < classCount; classIndex++) {
-        Class cls = classes[classIndex];
-        const char *imageCString = class_getImageName(cls);
-        if (!imageCString) continue;
-        NSString *imageName = [NSString stringWithUTF8String:imageCString];
-        YTABRuntimeImageScope imageScope = YTABRuntimeScopeForImageName(imageName);
-        if (imageScope < 0 || !YTABRuntimeScopeMatches(scope, imageScope)) continue;
 
-        NSString *className = NSStringFromClass(cls);
-        if (!className.length || YTABRuntimeClassExcluded(className)) continue;
-
-        for (NSUInteger pass = 0; pass < 2; pass++) {
-            BOOL classMethod = pass == 1;
-            Class owner = classMethod ? object_getClass(cls) : cls;
-            if (!owner) continue;
-            unsigned int methodCount = 0;
-            Method *methods = class_copyMethodList(owner, &methodCount);
-            for (unsigned int methodIndex = 0; methods && methodIndex < methodCount; methodIndex++) {
-                Method method = methods[methodIndex];
-                if (!YTABRuntimeSelectorAllowed(method)) continue;
-                NSString *selectorName = NSStringFromSelector(method_getName(method));
-                NSString *patchKey = [NSString stringWithFormat:@"%@%@#%@",
-                                      classMethod ? @"+" : @"", className, selectorName];
-                if ([seen containsObject:patchKey]) continue;
-                [seen addObject:patchKey];
-
+    // These values already exist as original method results from the
+    // PoomSmart-compatible launch capture. No new IMP and no fabricated BOOL.
+    if (scope != YTABRuntimeImageScopeMethods) {
+        NSDictionary<NSString *, NSDictionary<NSString *, id> *> *captured =
+            YTABCRuntimeValuesSnapshot();
+        for (NSString *className in @[@"YTGlobalConfig", @"YTColdConfig", @"YTHotConfig"]) {
+            NSDictionary<NSString *, id> *values = captured[className];
+            for (NSString *selector in values) {
+                if (![values[selector] isKindOfClass:NSNumber.class]) continue;
+                if (scope == YTABRuntimeImageScopeOverrides &&
+                    !YTABCOverrideValue(className, selector)) continue;
                 YTABRuntimeMethod *entry = [YTABRuntimeMethod new];
                 entry.className = className;
-                entry.selectorName = selectorName;
-                entry.classMethod = classMethod;
+                entry.selectorName = selector;
+                entry.typeEncoding = @"B16@0:8";
+                entry.imageName = @"Captured config";
+                entry.configFlag = YES;
+                [results addObject:entry];
+                [seen addObject:entry.patchKey];
+            }
+        }
+        if (scope == YTABRuntimeImageScopeFlags) {
+            [results sortUsingComparator:^NSComparisonResult(YTABRuntimeMethod *a,
+                                                               YTABRuntimeMethod *b) {
+                NSComparisonResult r = [a.className compare:b.className];
+                return r == NSOrderedSame
+                    ? [a.selectorName localizedCaseInsensitiveCompare:b.selectorName] : r;
+            }];
+            return results.copy;
+        }
+    }
+
+    // The generic method inventory is deliberately segregated from flags:
+    // selectors with arguments or arbitrary receivers cannot have one
+    // global current BOOL until a real invocation has been observed.
+    unsigned int classCount = 0;
+    Class *classes = objc_copyClassList(&classCount);
+    if (!classes) return results.copy;
+    NSDictionary *persisted = scope == YTABRuntimeImageScopeOverrides
+        ? YTABRuntimeStoredOverrides() : nil;
+    for (unsigned int index = 0; index < classCount; ++index) {
+        Class cls = classes[index];
+        if (!YTABRuntimeIsMainExecutableClass(cls)) continue;
+        NSString *className = NSStringFromClass(cls);
+        if (!className.length || YTABRuntimeClassExcluded(className)) continue;
+        for (NSUInteger pass = 0; pass < 2; pass++) {
+            BOOL isClassMethod = pass == 1;
+            Class owner = isClassMethod ? object_getClass(cls) : cls;
+            if (!owner) continue;
+            unsigned int count = 0;
+            Method *methods = class_copyMethodList(owner, &count);
+            for (unsigned int i = 0; methods && i < count; ++i) {
+                Method method = methods[i];
+                if (!YTABRuntimeSelectorAllowed(method)) continue;
+                NSString *selector = NSStringFromSelector(method_getName(method));
+                NSString *key = [NSString stringWithFormat:@"%@%@#%@",
+                                 isClassMethod ? @"+" : @"", className, selector];
+                if ([seen containsObject:key]) continue;
+                if (persisted && ![persisted[key] isKindOfClass:NSNumber.class])
+                    continue;
+                [seen addObject:key];
+                YTABRuntimeMethod *entry = [YTABRuntimeMethod new];
+                entry.className = className;
+                entry.selectorName = selector;
+                entry.classMethod = isClassMethod;
                 entry.argumentKind = YTABRuntimeArgumentKindForMethod(method);
-                entry.typeEncoding = [NSString stringWithUTF8String:method_getTypeEncoding(method) ?: ""];
-                entry.imageName = imageName.lastPathComponent ?: imageName;
+                entry.typeEncoding = [NSString stringWithUTF8String:
+                                        method_getTypeEncoding(method) ?: ""];
+                entry.imageName = @"YouTube runtime";
                 [results addObject:entry];
             }
             if (methods) free(methods);
         }
     }
     free(classes);
-
-    [results sortUsingComparator:^NSComparisonResult(YTABRuntimeMethod *left,
-                                                      YTABRuntimeMethod *right) {
-        NSComparisonResult classResult = [left.className localizedCaseInsensitiveCompare:right.className];
-        if (classResult != NSOrderedSame) return classResult;
-        if (left.classMethod != right.classMethod) return left.classMethod ? NSOrderedAscending : NSOrderedDescending;
-        return [left.selectorName localizedCaseInsensitiveCompare:right.selectorName];
+    [results sortUsingComparator:^NSComparisonResult(YTABRuntimeMethod *a,
+                                                       YTABRuntimeMethod *b) {
+        NSComparisonResult clsResult =
+            [a.className localizedCaseInsensitiveCompare:b.className];
+        if (clsResult != NSOrderedSame) return clsResult;
+        if (a.classMethod != b.classMethod)
+            return a.classMethod ? NSOrderedAscending : NSOrderedDescending;
+        return [a.selectorName localizedCaseInsensitiveCompare:b.selectorName];
     }];
     return results.copy;
 }
@@ -406,8 +464,8 @@ static NSArray<NSString *> *YTABRuntimeSearchTokens(NSString *query) {
     self.tableView.rowHeight = 58.0;
     self.tableView.estimatedRowHeight = 58.0;
 
-    self.scopeControl = [[UISegmentedControl alloc] initWithItems:@[@"YouTube", @"Frameworks", @"All"]];
-    self.scopeControl.selectedSegmentIndex = YTABRuntimeImageScopeYouTube;
+    self.scopeControl = [[UISegmentedControl alloc] initWithItems:@[@"Flags", @"Methods", @"Overrides"]];
+    self.scopeControl.selectedSegmentIndex = YTABRuntimeImageScopeFlags;
     [self.scopeControl addTarget:self action:@selector(scopeChanged:)
                 forControlEvents:UIControlEventValueChanged];
     self.navigationItem.titleView = self.scopeControl;
@@ -457,6 +515,19 @@ static NSArray<NSString *> *YTABRuntimeSearchTokens(NSString *query) {
             strongSelf.tableView.backgroundView = nil;
             strongSelf.allMethods = methods;
             [strongSelf applyFilter];
+            if (!methods.count) {
+                UILabel *empty = [UILabel new];
+                empty.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+                empty.textColor = UIColor.secondaryLabelColor;
+                empty.numberOfLines = 0;
+                empty.textAlignment = NSTextAlignmentCenter;
+                empty.text = scope == YTABRuntimeImageScopeFlags
+                    ? @"No captured config BOOLs. Enable YTABConfig's main switch and restart YouTube to capture original YTGlobalConfig / YTColdConfig / YTHotConfig values."
+                    : scope == YTABRuntimeImageScopeOverrides
+                    ? @"No stored overrides in the currently captured config and runtime catalog."
+                    : @"No compatible runtime BOOL methods were discovered in the main YouTube executable.";
+                strongSelf.tableView.backgroundView = empty;
+            }
         });
     });
 }
