@@ -7,6 +7,7 @@ extern BOOL YTABRuntimeBrowserApplyMode(NSString *patchKey, NSInteger mode);
 extern NSNumber *YTABRuntimeBrowserNativeSample(NSString *patchKey);
 extern BOOL YTABRuntimeBrowserPatchInstalled(NSString *patchKey);
 extern BOOL YTABRuntimeBrowserObserveKey(NSString *patchKey);
+extern NSString * const YTABRuntimeNativeSampleChangedNotification;
 
 // The runtime engine implements the filter; the UI only chooses where its
 // search field is hosted.
@@ -212,6 +213,9 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     self.tableView.separatorInset = UIEdgeInsetsMake(0, 16, 0, 16);
     self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
     self.definesPresentationContext = YES;
+    [[NSNotificationCenter defaultCenter] addObserver:self
+        selector:@selector(ytab_nativeSampleDidChange:)
+        name:YTABRuntimeNativeSampleChangedNotification object:nil];
 
     // Always-visible native search. YouTube's navigation wrapper can collapse
     // the UINavigationItem-integrated search field, so retain the native
@@ -264,12 +268,28 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     self.navigationItem.rightBarButtonItem.accessibilityLabel = @"Clear saved runtime patches";
 }
 
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self
+        name:YTABRuntimeNativeSampleChangedNotification object:nil];
+}
+
+- (void)ytab_nativeSampleDidChange:(NSNotification *)notification {
+    (void)notification;
+    if (![NSThread isMainThread]) return;
+    if (self.isViewLoaded && self.view.window) {
+        // The getter ran for real. Update the visible switches without
+        // re-invoking any YouTube method or changing the current filter.
+        [self.tableView reloadData];
+    }
+}
+
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     // Preserve UIKit's system navigation material; never install a custom
     // translucent/blur overlay that hides the toolbar or clips search.
     self.navigationItem.titleView = nil;
     self.navigationItem.hidesSearchBarWhenScrolling = NO;
+    [self.tableView reloadData]; // native samples may have changed offscreen
 }
 
 - (void)viewDidLayoutSubviews {
@@ -328,7 +348,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     (void)section;
-    return @"Green = observed System ON. Blue = our Force ON. Blue text with switch OFF = Force OFF. ? = no native sample yet. Long-press to remove the override. These are the last observed native results, not constants across every receiver and argument.";
+    return @"Scope: YouTube = main binary; Frameworks = loaded app-bundled frameworks; All = both. Only eligible ObjC BOOL methods; config getters are in Raw Lab. Green ON = observed System; blue ON = override; blue label + OFF = Force OFF; ? = unknown. Long press to remove an override. Native is the last actual result, potentially receiver/argument-dependent.";
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView
