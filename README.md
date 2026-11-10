@@ -5,6 +5,43 @@ reviewing experimental YouTube features with clear, reversible choices. It is
 not a raw selector dump: unknown behavior stays marked for research instead of
 being presented as a promise.
 
+## iOS 27 startup crash + native Liquid Glass browser update (2026-11-10)
+
+The 10:17:59 iOS 27 IPS shows an uncaught main-thread Core Data exception
+at `NSManagedObjectModel _initWithContentsOfURL:options:` and a YTABConfig
+frame directly beneath it. This is the same failure family as the three
+09:13 IPS logs. The new crash-time dylib UUID
+`59B88B83-A8D4-32F9-A600-45110A3524E1` does not match the last distributed
+Feather build UUID `F7E4A4DF-428C-3D86-B5D4-23880ACDD63A`.
+The exact failure reason is absent from the IPS, and on-device acceptance
+of any fix cannot be inferred from a successful compile.
+
+The earlier Core Data compatibility hook attempted the original optimized
+`.momd` first and retried an unoptimized model only after the exception;
+the new IPS demonstrates that **strategy did not prevent the abort**.
+Now it verifies and prefers the original IPA's VersionInfo-selected
+`DataLibDataModel-20.27.mom` *before* attempting the `.momd` initializer,
+using the original Core Data implementation. No model is fabricated,
+and unrelated model URLs pass through unchanged. If both paths fail, the
+original exception remains visible. This is a targeted model-loader
+compatibility hypothesis, **not** a device-validated crash fix.
+
+The Runtime Patch Browser row UI has also been rebuilt. Before, it showed
+an oversized stack with a monospaced selector, full type encoding, patch
+key, multi-line status and three-segment selector in *every* cell.
+Now rows use native UIKit Dynamic Type `Subheadline`, `Caption1`, and
+`Caption2` with adaptive truncation, a real `UISwitch` for the effective
+boolean, and a native button using iOS 26
+`UIButtonConfiguration.glassButtonConfiguration` for the selected
+`System / Force OFF / Force ON` mode. Choosing `System` restores the native
+implementation. The checked mode menu shows which selection is active.
+Tap a row to inspect the Objective-C encoding and copy the key; these are
+no longer forced into the list. The standalone pinned `UISearchBar` still
+feeds `ytab_currentSearchText` into `applyFilter` on every keystroke.
+UIKit decides the surrounding native navigation material; the tweak does
+not fake Liquid Glass using custom blur overlays. Source-level behavior
+is verifiable; exact presentation on iOS 27 needs an on-device test.
+
 ## Operational contract
 
 - Runs inside the iOS YouTube app; YouTube 16.29.4 and newer are the supported
