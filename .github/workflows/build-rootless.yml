@@ -53,6 +53,9 @@ jobs:
       contents: read
 
     env:
+      # macOS 15 Intel defaults to an older Xcode; its clang cannot parse
+      # iOS 26.2 SDK modulemaps (found_incompatible_headers__check_search_paths).
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
       SDK_NAME: iPhoneOS26.2.sdk
       BUILD_ROOTLESS: ${{ github.event_name != 'workflow_dispatch' || inputs.build_rootless }}
       BUILD_DYLIB: ${{ github.event_name != 'workflow_dispatch' || inputs.build_dylib }}
@@ -79,6 +82,14 @@ jobs:
 
       - name: Set PATH environment variable
         run: echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+
+      - name: Validate matching Xcode 26.2 toolchain
+        run: |
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version
+          xcodebuild -version | grep -Fx 'Xcode 26.2'
+          xcrun --find clang
+          xcrun --sdk iphoneos --show-sdk-version
 
       - name: Setup Theos
         uses: actions/checkout@v4
