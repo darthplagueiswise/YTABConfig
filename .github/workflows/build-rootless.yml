@@ -38,6 +38,7 @@ on:
   push:
     branches:
       - main
+      - agent/fix-sideload-black-screen
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
