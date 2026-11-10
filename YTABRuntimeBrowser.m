@@ -45,6 +45,9 @@ static NSDictionary<NSString *, NSNumber *> *sYTABRuntimeOverrideCache;
 static NSMutableSet<NSString *> *sYTABRuntimeInstalledKeys;
 static NSMutableDictionary<NSString *, NSNumber *> *sYTABRuntimeObservedNative;
 static BOOL sYTABRuntimeSampleRefreshPending;
+// The generic selector inventory is immutable within the current YouTube process.
+// Cache it after its first complete scan instead of re-enumerating on every tab switch.
+static NSArray<YTABRuntimeMethod *> *sYTABRuntimeMethodCatalog;
 NSString * const YTABRuntimeNativeSampleChangedNotification = @"YTABRuntimeNativeSampleChangedNotification";
 
 static NSDictionary<NSString *, NSNumber *> *YTABRuntimeStoredOverrides(void) {
@@ -342,6 +345,11 @@ static BOOL YTABRuntimeIsMainExecutableClass(Class cls) {
 }
 
 static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImageScope scope) {
+    if (scope == YTABRuntimeImageScopeMethods) {
+        @synchronized([YTABRuntimeMethod class]) {
+            if (sYTABRuntimeMethodCatalog) return sYTABRuntimeMethodCatalog;
+        }
+    }
     NSMutableArray<YTABRuntimeMethod *> *results = [NSMutableArray array];
     NSMutableSet<NSString *> *seen = [NSMutableSet set];
 
@@ -380,14 +388,32 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImage
     // The generic method inventory is deliberately segregated from flags:
     // selectors with arguments or arbitrary receivers cannot have one
     // global current BOOL until a real invocation has been observed.
-    unsigned int classCount = 0;
-    Class *classes = objc_copyClassList(&classCount);
-    if (!classes) return results.copy;
+    // The YouTube executable is the only generic-method source. Query its
+    // image directly first instead of inspecting every injected/system class.
+    // Fall back to the global class list if dyld cannot resolve the image.
+    NSMutableArray *candidates = [NSMutableArray array];
+    unsigned int imageClassCount = 0;
+    const char **imageNames = objc_copyClassNamesForImage(
+        [NSBundle mainBundle].executablePath.fileSystemRepresentation, &imageClassCount);
+    if (imageNames && imageClassCount) {
+        for (unsigned int index = 0; index < imageClassCount; ++index) {
+            Class cls = objc_getClass(imageNames[index]);
+            if (cls && YTABRuntimeIsMainExecutableClass(cls))
+                [candidates addObject:cls];
+        }
+    } else {
+        unsigned int classCount = 0;
+        Class *classes = objc_copyClassList(&classCount);
+        for (unsigned int index = 0; classes && index < classCount; ++index) {
+            Class cls = classes[index];
+            if (YTABRuntimeIsMainExecutableClass(cls)) [candidates addObject:cls];
+        }
+        if (classes) free(classes);
+    }
+    if (imageNames) free(imageNames);
     NSDictionary *persisted = scope == YTABRuntimeImageScopeOverrides
         ? YTABRuntimeStoredOverrides() : nil;
-    for (unsigned int index = 0; index < classCount; ++index) {
-        Class cls = classes[index];
-        if (!YTABRuntimeIsMainExecutableClass(cls)) continue;
+    for (Class cls in candidates) {
         NSString *className = NSStringFromClass(cls);
         if (!className.length || YTABRuntimeClassExcluded(className)) continue;
         for (NSUInteger pass = 0; pass < 2; pass++) {
@@ -419,7 +445,6 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImage
             if (methods) free(methods);
         }
     }
-    free(classes);
     [results sortUsingComparator:^NSComparisonResult(YTABRuntimeMethod *a,
                                                        YTABRuntimeMethod *b) {
         NSComparisonResult clsResult =
@@ -429,7 +454,13 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImage
             return a.classMethod ? NSOrderedAscending : NSOrderedDescending;
         return [a.selectorName localizedCaseInsensitiveCompare:b.selectorName];
     }];
-    return results.copy;
+    NSArray<YTABRuntimeMethod *> *complete = results.copy;
+    if (scope == YTABRuntimeImageScopeMethods) {
+        @synchronized([YTABRuntimeMethod class]) {
+            sYTABRuntimeMethodCatalog = complete;
+        }
+    }
+    return complete;
 }
 
 static NSArray<NSString *> *YTABRuntimeSearchTokens(NSString *query) {
@@ -450,6 +481,17 @@ static NSArray<NSString *> *YTABRuntimeSearchTokens(NSString *query) {
 @property(nonatomic, strong) UISegmentedControl *scopeControl;
 @property(nonatomic) NSUInteger scanGeneration;
 @end
+
+// Serialize inventory requests. A rapid Flags -> Methods -> Overrides switch
+// must not launch overlapping expensive sweeps on the global worker pool.
+static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
+    static dispatch_queue_t queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        queue = dispatch_queue_create("com.ytabconfig.runtime.inventory", DISPATCH_QUEUE_SERIAL);
+    });
+    return queue;
+}
 
 @implementation YTABRuntimeBrowserViewController
 
@@ -500,14 +542,35 @@ static NSArray<NSString *> *YTABRuntimeSearchTokens(NSString *query) {
     self.visibleMethods = @[];
     [self.tableView reloadData];
 
+    UIView *loading = [[UIView alloc] initWithFrame:self.tableView.bounds];
     UIActivityIndicatorView *indicator = [[UIActivityIndicatorView alloc]
         initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     [indicator startAnimating];
-    self.tableView.backgroundView = indicator;
+    UILabel *hint = [UILabel new];
+    hint.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    hint.textColor = UIColor.secondaryLabelColor;
+    hint.textAlignment = NSTextAlignmentCenter;
+    hint.numberOfLines = 0;
+    hint.text = self.scopeControl.selectedSegmentIndex == YTABRuntimeImageScopeMethods
+        ? @"Indexing YouTube methods for the first time. This may take longer on large builds."
+        : @"Loading captured runtime values…";
+    UIStackView *progress = [[UIStackView alloc] initWithArrangedSubviews:@[indicator, hint]];
+    progress.axis = UILayoutConstraintAxisVertical;
+    progress.alignment = UIStackViewAlignmentCenter;
+    progress.spacing = 14;
+    progress.translatesAutoresizingMaskIntoConstraints = NO;
+    [loading addSubview:progress];
+    [NSLayoutConstraint activateConstraints:@[
+        [progress.centerXAnchor constraintEqualToAnchor:loading.centerXAnchor],
+        [progress.centerYAnchor constraintEqualToAnchor:loading.centerYAnchor],
+        [progress.leadingAnchor constraintGreaterThanOrEqualToAnchor:loading.leadingAnchor constant:28],
+        [progress.trailingAnchor constraintLessThanOrEqualToAnchor:loading.trailingAnchor constant:-28],
+    ]];
+    self.tableView.backgroundView = loading;
 
     YTABRuntimeImageScope scope = (YTABRuntimeImageScope)self.scopeControl.selectedSegmentIndex;
     __weak typeof(self) weakSelf = self;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    dispatch_async(YTABRuntimeInventoryQueue(), ^{
         NSArray<YTABRuntimeMethod *> *methods = YTABRuntimeDiscoverMethods(scope);
         dispatch_async(dispatch_get_main_queue(), ^{
             __strong typeof(weakSelf) strongSelf = weakSelf;
