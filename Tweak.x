@@ -12,6 +12,7 @@ NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *
 
 extern void SearchHook(void);
 extern void YTABCInstallNativeDiagnostics(void);
+extern void YTABCInstallCoreDataModelCompatibility(void);
 extern void YTABCInstallNativeExperimentsHealthHooks(void);
 extern BOOL tweakEnabled(void);
 extern BOOL groupedSettings(void);
@@ -127,6 +128,8 @@ static void hookClass(NSObject *instance) {
 %end
 
 %ctor {
+    // Install the DataLibDataModel-only recovery before any app services start.
+    YTABCInstallCoreDataModelCompatibility();
     NSString *modulePath = [NSBundle.mainBundle.bundlePath
         stringByAppendingPathComponent:@"Frameworks/Module_Framework.framework"];
     if ([NSFileManager.defaultManager fileExistsAtPath:modulePath]) {
