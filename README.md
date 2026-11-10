@@ -111,6 +111,49 @@ is not another YouTube feature-flag source. No second config hook system
 is installed. `Methods` is not a universal function browser; it enumerates
 compatible Objective-C BOOL-returning selectors only.
 
+## YouTube 21.43.5 native Settings menus and iOS 26/27 search (2026-11-10)
+
+The previous Runtime Patch Browser placed a custom UISearchBar inside a
+pinned UITableView section header, which prevented **native iOS 26 search
+morphing**. On iOS 26 and later, the browser now retains the original
+`UISearchController` in `UINavigationItem.searchController`, opts into
+`UINavigationItemSearchBarPlacementIntegrated` and
+`searchBarPlacementAllowsToolbarIntegration`, places Apple's
+`searchBarPlacementBarButtonItem` in `UIViewController.toolbarItems`, and
+unhides the native `UINavigationController` toolbar while presented.
+`updateSearchResultsForSearchController:` remains the real filter callback.
+Prior iOS releases retain the pinned-header fallback. UIKit is responsible
+for the Liquid Glass material, scroll edges, and search expand/collapse
+transition; no artificial animation is created. The actual result must
+still be evaluated on the sideloaded iOS 27 host navigation controller.
+
+Four direct buttons were added at the front of the Feature Lab Settings
+category: **Native Experiments — search & studies**, **Debug & QA tools**,
+**Native Configs / Phenotype**, and **Hidden Settings rows**. The original
+experiments launcher uses the real `YTSettingsExperimentsTopViewController`
+with live `YTSettingsViewController` as its parentResponder. Debug and Config
+actions open focused, real native tools sections; Config flags open the
+captured-BOOL browser without duplicate config hooks.
+
+`YTABCSettingsRowsInspector.m` is a read-only native Settings inspector.
+It validates the Objective-C method ABIs and reads
+`-[YTSettingsViewController settingsSectionControllers]`,
+`+[YTAppSettingsPresentationData settingsCategoryOrder]`, and
+`YTSettingsSectionController` properties `items`, `title`, `isHeaderHidden`,
+and `isDisabled`. It distinguishes an actual loaded section from a
+declared-but-unloaded category; only loaded rows can be inspected.
+No server-ineligible categories or rows are fabricated or unlocked.
+
+The original YouTube executable has methods:
+`YTSettingsViewController updateDebugAndQASections:withEntry:`
+(`0x1013cde08`) with an empty `ret` implementation in 21.43.5;
+`YTSettingsViewController collectionView:layout:itemIsHiddenAtIndexPath:`
+(`0x1013cde0c`); `settingsSectionControllers` (`0x1013ccda0`);
+`YTAppSettingsPresentationData settingsCategoryOrder` (`0x10141f460`).
+These were confirmed from the IPA's original ARM64 binary; methods with
+Debug or Internal in their names are not necessarily UIViewControllers or
+legitimate launchers.
+
 ## Operational contract
 
 - Runs inside the iOS YouTube app; YouTube 16.29.4 and newer are the supported
