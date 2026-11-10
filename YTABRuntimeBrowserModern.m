@@ -6,6 +6,7 @@
 extern BOOL YTABRuntimeBrowserApplyMode(NSString *patchKey, NSInteger mode);
 extern NSNumber *YTABRuntimeBrowserNativeSample(NSString *patchKey);
 extern BOOL YTABRuntimeBrowserPatchInstalled(NSString *patchKey);
+extern BOOL YTABRuntimeBrowserObserveKey(NSString *patchKey);
 
 // The runtime engine implements the filter; the UI only chooses where its
 // search field is hosted.
@@ -73,6 +74,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 @property(nonatomic, strong) UILabel *ownerLabel;
 @property(nonatomic, strong) UILabel *statusLabel;
 @property(nonatomic, strong) UISwitch *overrideSwitch;
+@property(nonatomic, strong) UILabel *unknownLabel;
 @property(nonatomic, strong) UIButton *modeButton;
 @end
 
@@ -110,9 +112,21 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
                                                  forAxis:UILayoutConstraintAxisHorizontal];
 
     _overrideSwitch = [UISwitch new];
-    _overrideSwitch.accessibilityLabel = @"Force this selector's result";
+    _overrideSwitch.accessibilityLabel = @"Native boolean or effective override";
     [_overrideSwitch setContentHuggingPriority:UILayoutPriorityRequired
                                       forAxis:UILayoutConstraintAxisHorizontal];
+
+    // Do not paint a never-observed System getter as OFF. The receiver and
+    // arguments may be unavailable, and invoking arbitrary getters can
+    // change app state. Render a neutral question mark until it executes.
+    _unknownLabel = [UILabel new];
+    _unknownLabel.text = @"?";
+    _unknownLabel.textAlignment = NSTextAlignmentCenter;
+    _unknownLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+    _unknownLabel.textColor = UIColor.tertiaryLabelColor;
+    _unknownLabel.accessibilityLabel = @"System value not observed yet";
+    [_unknownLabel.widthAnchor constraintEqualToConstant:49].active = YES;
+    _unknownLabel.hidden = YES;
 
     _modeButton = [UIButton buttonWithType:UIButtonTypeSystem];
     if (@available(iOS 26.0, *))
@@ -126,7 +140,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
                                   forAxis:UILayoutConstraintAxisHorizontal];
 
     UIStackView *headline = [[UIStackView alloc] initWithArrangedSubviews:@[
-        _selectorLabel, _overrideSwitch
+        _selectorLabel, _unknownLabel, _overrideSwitch
     ]];
     headline.axis = UILayoutConstraintAxisHorizontal;
     headline.alignment = UIStackViewAlignmentCenter;
@@ -158,7 +172,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 }
 @end
 
-@interface YTABRuntimeBrowserModernViewController () <UISearchBarDelegate>
+@interface YTABRuntimeBrowserModernViewController () <UISearchBarDelegate, UIContextMenuInteractionDelegate>
 @property(nonatomic, strong) UIView *scopeHeaderView;
 @property(nonatomic, strong) UILabel *scopeHeaderLabel;
 @property(nonatomic, strong) UISearchBar *pinnedSearchBar;
@@ -314,7 +328,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     (void)section;
-    return @"System passes through the original result. Force OFF/ON is saved and restored in %ctor. Removing an override is immediate; an already installed wrapper remains pass-through until restart.";
+    return @"Green = observed System ON. Blue = our Force ON. Blue text with switch OFF = Force OFF. ? = no native sample yet. Long-press to remove the override. These are the last observed native results, not constants across every receiver and argument.";
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView
@@ -341,29 +355,48 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     YTABModernPatchMode mode = YTABModernModeForKey(key);
     NSNumber *native = YTABRuntimeBrowserNativeSample(key);
     BOOL installed = YTABRuntimeBrowserPatchInstalled(key);
-    NSString *nativeText = native ? (native.boolValue ? @"ON" : @"OFF") : @"not sampled";
-    NSString *effectiveText = mode == YTABModernPatchModeSystem
-        ? nativeText
-        : (installed ? (mode == YTABModernPatchModeForceOn ? @"ON" : @"OFF")
-                     : @"pending");
-    cell.statusLabel.text = [NSString stringWithFormat:@"Native %@ · Effective %@",
-                             nativeText, effectiveText];
+    BOOL hasOverride = mode != YTABModernPatchModeSystem;
+    BOOL nativeKnown = native != nil;
+    BOOL effectiveKnown = hasOverride || nativeKnown;
+    BOOL effectiveOn = hasOverride
+        ? mode == YTABModernPatchModeForceOn
+        : native.boolValue;
+    NSString *nativeText = nativeKnown ? (native.boolValue ? @"ON" : @"OFF") : @"unknown";
+    NSString *effectiveText = effectiveKnown ? (effectiveOn ? @"ON" : @"OFF") : @"unknown";
+
+    // System true = green; true supplied by our override = blue.
+    // False stays OFF in both modes; an override is still clearly labeled
+    // blue, so Force OFF is never mistaken for an unmodified false.
+    cell.overrideSwitch.onTintColor = hasOverride
+        ? UIColor.systemBlueColor : UIColor.systemGreenColor;
+    cell.statusLabel.textColor = hasOverride
+        ? UIColor.systemBlueColor : UIColor.secondaryLabelColor;
+    cell.statusLabel.text = [NSString stringWithFormat:
+        @"Native %@ · Effective %@ · %@",
+        nativeText, effectiveText,
+        hasOverride ? (installed ? @"Override" : @"Override pending") : @"System"];
 
     [cell.overrideSwitch removeTarget:nil action:NULL forControlEvents:UIControlEventValueChanged];
-    BOOL effectiveBool = mode == YTABModernPatchModeSystem
-        ? (native ? native.boolValue : NO)
-        : mode == YTABModernPatchModeForceOn;
-    [cell.overrideSwitch setOn:effectiveBool animated:NO];
+    [cell.overrideSwitch setOn:effectiveKnown && effectiveOn animated:NO];
+    cell.overrideSwitch.hidden = !effectiveKnown;
+    cell.unknownLabel.hidden = effectiveKnown;
     cell.overrideSwitch.accessibilityValue = [NSString stringWithFormat:
-        @"%@, current mode %@. Native %@",
-        effectiveText,
-        mode == YTABModernPatchModeSystem ? @"System"
-        : (mode == YTABModernPatchModeForceOn ? @"Force ON" : @"Force OFF"),
-        nativeText];
+        @"Effective %@, %@. Last native %@",
+        effectiveText, hasOverride ? @"override" : @"system", nativeText];
     objc_setAssociatedObject(cell.overrideSwitch, YTABModernPatchKeyAssociation,
                              key, OBJC_ASSOCIATION_COPY_NONATOMIC);
     [cell.overrideSwitch addTarget:self action:@selector(overrideSwitchChanged:)
                   forControlEvents:UIControlEventValueChanged];
+
+    // Native iOS context menu also works when long-pressing the switch.
+    if (@available(iOS 13.0, *)) {
+        BOOL attached = NO;
+        for (id interaction in cell.overrideSwitch.interactions)
+            if ([interaction isKindOfClass:[UIContextMenuInteraction class]]) attached = YES;
+        if (!attached)
+            [cell.overrideSwitch addInteraction:
+                [[UIContextMenuInteraction alloc] initWithDelegate:self]];
+    }
 
     NSString *modeLabel = mode == YTABModernPatchModeSystem ? @"System"
         : (mode == YTABModernPatchModeForceOn ? @"Force ON" : @"Force OFF");
@@ -388,7 +421,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     cell.modeButton.accessibilityValue = modeLabel;
     cell.accessibilityLabel = [NSString stringWithFormat:@"%@, %@, native %@",
                                selectorName, modeLabel, nativeText];
-    cell.accessibilityHint = @"Tap for full Objective-C signature and patch key.";
+    cell.accessibilityHint = @"Tap for details. Long press the row or switch to remove an override.";
     return cell;
 }
 
@@ -409,6 +442,75 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
         [actions addObject:action];
     }
     return [UIMenu menuWithTitle:@"Runtime override" children:actions];
+}
+
+// Long press on the native table row OR its switch shows a UIKit context
+// menu. System reverts immediately, without restarting or re-sampling
+// an arbitrary Objective-C getter.
+- (UIContextMenuConfiguration *)ytab_contextMenuForKey:(NSString *)key {
+    if (!key.length) return nil;
+    __weak typeof(self) weakSelf = self;
+    NSString *capturedKey = [key copy];
+    return [UIContextMenuConfiguration configurationWithIdentifier:capturedKey
+        previewProvider:nil actionProvider:^UIMenu *(__unused NSArray<UIMenuElement *> *suggested) {
+        NSMutableArray<UIMenuElement *> *actions = [NSMutableArray array];
+        YTABModernPatchMode current = YTABModernModeForKey(capturedKey);
+        if (current != YTABModernPatchModeSystem) {
+            UIAction *remove = [UIAction actionWithTitle:@"Remove override (System)"
+                image:[UIImage systemImageNamed:@"arrow.uturn.backward"]
+                identifier:nil handler:^(__unused UIAction *action) {
+                [weakSelf ytab_applyMode:YTABModernPatchModeSystem patchKey:capturedKey];
+            }];
+            remove.attributes = UIMenuElementAttributesDestructive;
+            [actions addObject:remove];
+        }
+        UIAction *forceOn = [UIAction actionWithTitle:@"Force ON"
+            image:[UIImage systemImageNamed:@"checkmark.circle"] identifier:nil
+            handler:^(__unused UIAction *action) {
+                [weakSelf ytab_applyMode:YTABModernPatchModeForceOn patchKey:capturedKey];
+            }];
+        UIAction *forceOff = [UIAction actionWithTitle:@"Force OFF"
+            image:[UIImage systemImageNamed:@"xmark.circle"] identifier:nil
+            handler:^(__unused UIAction *action) {
+                [weakSelf ytab_applyMode:YTABModernPatchModeForceOff patchKey:capturedKey];
+            }];
+        [actions addObjectsFromArray:@[forceOn, forceOff]];
+        if (!YTABRuntimeBrowserPatchInstalled(capturedKey)) {
+            UIAction *observe = [UIAction actionWithTitle:@"Observe native calls (pass-through)"
+                image:[UIImage systemImageNamed:@"waveform.path.ecg"]
+                identifier:nil handler:^(__unused UIAction *action) {
+                if (!YTABRuntimeBrowserObserveKey(capturedKey))
+                    [weakSelf ytab_showObserverUnavailable];
+                [weakSelf.tableView reloadData];
+            }];
+            [actions addObject:observe];
+        }
+        return [UIMenu menuWithTitle:@"Runtime BOOL" children:actions];
+    }];
+}
+
+- (void)ytab_showObserverUnavailable {
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:@"Native observation unavailable"
+        message:@"This Objective-C getter could not be instrumented in the current build."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK"
+        style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (UIContextMenuConfiguration *)tableView:(UITableView *)tableView
+    contextMenuConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath point:(CGPoint)point {
+    (void)tableView; (void)point;
+    id method = [self ytab_methodAtIndexPath:indexPath];
+    return [self ytab_contextMenuForKey:YTABModernStringValue(method, @"patchKey")];
+}
+
+- (UIContextMenuConfiguration *)contextMenuInteraction:(UIContextMenuInteraction *)interaction
+    configurationForMenuAtLocation:(CGPoint)location {
+    (void)location;
+    NSString *key = objc_getAssociatedObject(interaction.view, YTABModernPatchKeyAssociation);
+    return [self ytab_contextMenuForKey:key];
 }
 
 - (void)ytab_applyMode:(YTABModernPatchMode)mode patchKey:(NSString *)key {
