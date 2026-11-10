@@ -145,6 +145,12 @@ require_text YTABRuntimeBrowser.m "YTABRuntimeArgumentKindObject"
 require_text YTABRuntimeBrowser.m "YTABRuntimeArgumentKindInteger"
 require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeYouTube"
 require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeModule"
+# The Frameworks tab means every currently loaded app-bundled framework,
+# not only the optional Module_Framework binary.
+require_text YTABRuntimeBrowser.m 'stringByAppendingPathComponent:@"Frameworks"'
+require_text YTABRuntimeBrowser.m '[imageName hasPrefix:frameworksRoot]'
+require_text YTABRuntimeBrowser.m '@"YouTube", @"Frameworks", @"All"'
+reject_text YTABRuntimeBrowser.m '[imageName containsString:@"/Module_Framework.framework/"]'
 require_text YTABRuntimeBrowser.m '@"YTGlobalConfig", @"YTColdConfig", @"YTHotConfig"'
 require_text YTABRuntimeBrowserHooks.x "YTABRuntimeBrowserReinstallPersistedHooks();"
 reject_text YTABRuntimeBrowser.m "MSHookFunction"
@@ -173,6 +179,21 @@ reject_text YTABRuntimeBrowserModern.m "[search removeFromSuperview]"
 require_text YTABRuntimeBrowserModern.m "searchBar:(UISearchBar *)searchBar textDidChange:"
 require_text YTABRuntimeBrowserModern.m "self.tableView.tableHeaderView = nil;"
 require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserNativeSample"
+# The UI must not turn a missing native sample into a fake System OFF state.
+require_text YTABRuntimeBrowserModern.m "cell.overrideSwitch.hidden = !effectiveKnown;"
+require_text YTABRuntimeBrowserModern.m "cell.unknownLabel.hidden = effectiveKnown;"
+require_text YTABRuntimeBrowserModern.m "UIColor.systemGreenColor"
+require_text YTABRuntimeBrowserModern.m "UIColor.systemBlueColor"
+require_text YTABRuntimeBrowserModern.m "mode == YTABModernPatchModeSystem"
+require_text YTABRuntimeBrowserModern.m "contextMenuConfigurationForRowAtIndexPath:"
+require_text YTABRuntimeBrowserModern.m "contextMenuInteraction:(UIContextMenuInteraction *)interaction"
+require_text YTABRuntimeBrowserModern.m "Remove override (System)"
+require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserObserveKey(capturedKey)"
+require_text YTABRuntimeBrowserModern.m "YTABRuntimeNativeSampleChangedNotification"
+require_text YTABRuntimeBrowser.m "if (!previous || previous.boolValue != value)"
+require_text YTABRuntimeBrowser.m "postNotificationName:YTABRuntimeNativeSampleChangedNotification"
+require_text YTABRuntimeBrowser.m "BOOL YTABRuntimeBrowserObserveKey"
+reject_text YTABRuntimeBrowserModern.m "cell.overrideSwitch setOn:effectiveBool"
 require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserPatchInstalled"
 require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserApplyMode"
 require_text YTABRuntimeBrowser.m "if (value && !YTABRuntimeInstallPatchKey(key)) return NO;"
