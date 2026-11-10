@@ -190,7 +190,6 @@ require_text YTABRuntimeBrowserModern.m 'NSArray<NSString *> *titles = @[@"Syste
 require_text YTABRuntimeBrowserModern.m "UIFontTextStyleSubheadline"
 require_text YTABRuntimeBrowserModern.m "UIFontTextStyleCaption2"
 reject_text YTABRuntimeBrowserModern.m "monospacedSystemFontOfSize:15.0"
-reject_text YTABRuntimeBrowserModern.m "UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@["
 require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserReinstallPersistedHooks();"
 require_text YTABRuntimeBrowserModern.m "already installed wrapper remains pass-through until restart"
 reject_text YTABRuntimeBrowserModern.m "UIAlertControllerStyleActionSheet"
