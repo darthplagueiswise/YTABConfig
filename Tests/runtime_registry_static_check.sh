@@ -180,14 +180,16 @@ require_text YTABRuntimeBrowserModern.m "viewForHeaderInSection:"
 require_text YTABRuntimeBrowser.m "- (NSString *)ytab_currentSearchText"
 require_text YTABRuntimeBrowser.m "YTABRuntimeSearchTokens([self ytab_currentSearchText])"
 require_text YTABRuntimeBrowserModern.m 'UISearchBar *search = [[UISearchBar alloc] initWithFrame:CGRectZero]'
-# Native iOS 26 search must be hosted by the system toolbar for Liquid Glass morphing.
+# Native iOS 26/27 IntegratedButton morphs in the navigation bar. Disallow
+# toolbar integration to avoid overlapping the final rows inside YouTube's
+# custom Settings navigation container.
 require_text YTABRuntimeBrowser.m "- (UISearchController *)ytab_ownedSearchController"
 require_text YTABRuntimeBrowserModern.m "UINavigationItemSearchBarPlacementIntegrated"
-require_text YTABRuntimeBrowserModern.m "searchBarPlacementAllowsToolbarIntegration = YES"
-require_text YTABRuntimeBrowserModern.m "searchBarPlacementBarButtonItem"
+require_text YTABRuntimeBrowserModern.m "searchBarPlacementAllowsToolbarIntegration = NO"
+reject_text YTABRuntimeBrowserModern.m "searchBarPlacementBarButtonItem"
 require_text YTABRuntimeBrowserModern.m "self.navigationItem.searchController = nativeSearch;"
-require_text YTABRuntimeBrowserModern.m "self.toolbarItems = @[searchItem];"
-require_text YTABRuntimeBrowserModern.m "setToolbarHidden:NO"
+require_text YTABRuntimeBrowserModern.m "self.toolbarItems = nil;"
+reject_text YTABRuntimeBrowserModern.m "setToolbarHidden:NO"
 require_text YTABRuntimeBrowserModern.m '(self.pinnedSearchBar.text ?: @"")'
 require_text YTABRuntimeBrowserModern.m '[self applyFilter];'
 reject_text YTABRuntimeBrowserModern.m "self.navigationItem.searchController.searchBar"
@@ -232,7 +234,7 @@ require_text YTABRuntimeBrowserModern.m "UIFontTextStyleCaption2"
 reject_text YTABRuntimeBrowserModern.m "monospacedSystemFontOfSize:15.0"
 require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserReinstallPersistedHooks();"
 # The footer must not sit under the native bottom search bar on iOS 26/27.
-require_text YTABRuntimeBrowserModern.m "Native bottom-toolbar search can overlap long section footers."
+require_text YTABRuntimeBrowserModern.m "Explanations belong in detail views"
 require_text YTABRuntimeBrowserModern.m "UINavigationItemSearchBarPlacementIntegratedButton"
 require_text YTABRuntimeBrowser.m "objc_copyClassNamesForImage"
 require_text YTABRuntimeBrowser.m "sYTABRuntimeMethodCatalog = complete"
