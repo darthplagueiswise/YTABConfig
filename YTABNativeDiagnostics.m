@@ -13,6 +13,49 @@ static NSUInteger syncCalls, configurationCalls, searchCalls, optInCalls, optOut
 static BOOL sawGooglerCheck, lastNativeGoogler, sawInternalCheck, lastNativeInternal;
 static NSMutableSet<NSString *> *installedMethods;
 
+// Sanitized, read-only evidence of experiment search completion. The native
+// callbacks still receive the original objects; auth and request bodies remain untouched.
+static NSUInteger searchSuccessCallbacks, searchFailureCallbacks;
+static NSString *lastSearchResponseClass, *lastSearchErrorDomain;
+static NSInteger lastSearchErrorCode, lastSearchHTTPStatus;
+static NSUInteger settings30Calls, settings37Calls;
+static BOOL settings30SawEntry, settings37SawEntry;
+
+void YTABCRecordSettingsCategoryUpdate(NSUInteger category, id entry) {
+    if (category != 30 && category != 37) return;
+    @synchronized([NSProcessInfo processInfo]) {
+        if (category == 30) {
+            settings30Calls++;
+            if (entry) settings30SawEntry = YES;
+        } else {
+            settings37Calls++;
+            if (entry) settings37SawEntry = YES;
+        }
+    }
+}
+
+// Values are deliberately coarse. No query terms, tokens, account IDs,
+// request URLs, cookies, response bodies or NSError descriptions are saved.
+static void YTABRecordSearchError(id candidate) {
+    @synchronized([NSProcessInfo processInfo]) {
+        searchFailureCallbacks++;
+        lastSearchErrorDomain = @"non-NSError callback";
+        lastSearchErrorCode = 0;
+        lastSearchHTTPStatus = 0;
+        if (![candidate isKindOfClass:[NSError class]]) return;
+        NSError *error = (NSError *)candidate;
+        NSString *domain = error.domain ?: @"";
+        lastSearchErrorDomain = domain.length > 96 ? [domain substringToIndex:96] : domain;
+        lastSearchErrorCode = error.code;
+        for (id value in error.userInfo.allValues) {
+            if ([value isKindOfClass:[NSHTTPURLResponse class]]) {
+                lastSearchHTTPStatus = [(NSHTTPURLResponse *)value statusCode];
+                break;
+            }
+        }
+    }
+}
+
 static BOOL YTABNativeTrace(NSString *key) {
     return [[NSUserDefaults standardUserDefaults] boolForKey:key];
 }
@@ -82,7 +125,24 @@ static void YTABSearch(id target, SEL selector, id query, id response, id failur
     @synchronized([NSProcessInfo processInfo]) { lastExperimentService = target; searchCalls++; }
     if (YTABNativeTrace(@"YTABCTraceExperimentsSearch"))
         NSLog(@"[YTABC InnerTube] native experiment search observed (request data suppressed)");
-    if (originalSearch) originalSearch(target,selector,query,response,failure);
+
+    // The native service receives the exact original query. Only the two
+    // one-argument callbacks are wrapped; each forwards the original object.
+    void (^originalCompletion)(id) = [response copy];
+    void (^originalFailure)(id) = [failure copy];
+    void (^observedCompletion)(id) = originalCompletion ? ^(id result) {
+        @synchronized([NSProcessInfo processInfo]) {
+            searchSuccessCallbacks++;
+            lastSearchResponseClass = result ? NSStringFromClass([result class]) : @"nil";
+        }
+        originalCompletion(result);
+    } : nil;
+    void (^observedFailure)(id) = originalFailure ? ^(id error) {
+        YTABRecordSearchError(error);
+        originalFailure(error);
+    } : nil;
+    if (originalSearch) originalSearch(target,selector,query,
+                                       observedCompletion,observedFailure);
 }
 
 static void (*originalOptIn)(id,SEL,id,id,id);
@@ -180,6 +240,16 @@ NSDictionary<NSString *, id> *YTABCCopyNativeDiagnostics(void) {
             @"nativeSyncCalls": @(syncCalls),
             @"phenotypeConfigurationCalls": @(configurationCalls),
             @"nativeSearchCalls": @(searchCalls),
+            @"searchSuccessCallbacks": @(searchSuccessCallbacks),
+            @"searchFailureCallbacks": @(searchFailureCallbacks),
+            @"lastSearchResponseClass": lastSearchResponseClass ?: @"not observed",
+            @"lastSearchErrorDomain": lastSearchErrorDomain ?: @"not observed",
+            @"lastSearchErrorCode": @(lastSearchErrorCode),
+            @"lastSearchHTTPStatus": @(lastSearchHTTPStatus),
+            @"category30UpdateCalls": @(settings30Calls),
+            @"category37UpdateCalls": @(settings37Calls),
+            @"category30HadEntry": @(settings30SawEntry),
+            @"category37HadEntry": @(settings37SawEntry),
             @"nativeOptInCalls": @(optInCalls),
             @"nativeOptOutCalls": @(optOutCalls),
             @"nativeGooglerCheckObserved": @(sawGooglerCheck),
