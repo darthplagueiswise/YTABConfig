@@ -30,7 +30,7 @@ require_text YTABCSettingsRowsInspector.m '@selector(settingsCategoryOrder)'
 require_text YTABCSettingsRowsInspector.m '"isHeaderHidden"'
 require_text YTABCSettingsRowsInspector.m '"isDisabled"'
 require_text YTABCSettingsRowsInspector.m '"items"'
-require_text YTABCSettingsRowsInspector.m "server rows are not"
+require_text YTABCSettingsRowsInspector.m "Rows suppressed by server logic are not synthesized or unlocked."
 
 require_text Settings.x "YTABCPushNativeExperiments(settingsViewController)"
 require_text Settings.x "YTABCPresentNativeExperiments(settingsViewController)"
