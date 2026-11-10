@@ -51,17 +51,36 @@ rootless `@rpath/YTABConfig.dylib` identity. Sideload artifacts use explicit
 `@executable_path` identities that must match where the injector copies the
 file.
 
-## Native menu build compatibility
+## Native Phenotype and InnerTube instrumentation (YouTube 21.43.5)
 
-The previous draft included Phenotype/InnerTube test switches wired to
-functions not implemented in this branch. They are not shipped in the
-release build and the incomplete `YTInternalIdentity.x` source is excluded
-from `Makefile`. This fixes a deterministic linker issue as well as the
-obsolete employee-experiments CI assertions, without replacing account
-authentication or returning false employee status.
+`YTABNativeDiagnostics.m` now implements a **compiled**, runtime-checked
+diagnostics layer for the actual Objective-C methods in the YouTube main
+executable. This supersedes the previous draft's missing functions. The module
+uses `MSHookMessageEx` only after an exact type-encoding comparison, and
+continues to call each original method unchanged.
 
-The tested scope is local native menu navigation, playback diagnostic
-observation, and read-only inventories; not employee authorization.
+It records the native results of `hasGooglerAccount` and
+`isInternalHeterodyneSyncer` rather than pretending a non-Googler account
+is an internal Google identity. It observes the original
+`PHTHeterodyneSyncer.syncWithCallback:` and
+`PHTFlatFilePhenotype.syncExperimentsWithServerInternal:syncAfterConfiguration:callback:`
+paths. An optional manual resync uses only the real previously observed syncer.
+It never changes authentication, tokens or server URLs. A successfully queued
+native call does not imply that a server accepted the sync.
+
+The native `YTExperimentsServiceImpl` search, opt-in, and opt-out calls are
+traced independently. The `clearCaches` action targets only a live service
+observed on one of those paths. Request payloads, account IDs and auth tokens
+are intentionally omitted from logs.
+
+Feature Lab provides switches for the four independent traces, a read-only
+diagnostic state dialog, native resync and native cache clear. These actions are
+unavailable until the corresponding native instance has been observed. No
+authentication or employee/dogfood entitlement bypass is exposed.
+
+The old incomplete `YTInternalIdentity.x` remains as uncompiled historical
+source; it must not be used to claim that an Employee mode exists. This is
+separate from exposing local debug UI controllers.
 
 ## Native YouTube menus (21.43.5 binary audit)
 
