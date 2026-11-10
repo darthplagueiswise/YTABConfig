@@ -534,6 +534,10 @@ static NSArray<NSString *> *YTABRuntimeSearchTokens(NSString *query) {
 
 // Presentation-independent search source. The modern subclass provides a
 // standalone UISearchBar which is not managed by UINavigationItem.
+- (UISearchController *)ytab_ownedSearchController {
+    return self.searchController;
+}
+
 - (NSString *)ytab_currentSearchText {
     return self.searchController.searchBar.text ?: @"";
 }
