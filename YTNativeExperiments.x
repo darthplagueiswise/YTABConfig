@@ -33,6 +33,8 @@
 // arquivo.
 
 #import <UIKit/UIKit.h>
+#import <objc/runtime.h>
+#import <string.h>
 
 // Seletores messageados dinamicamente. Declarados em NSObject pra o ARC aceitar
 // sem hard-link contra classes do app; a resolução é toda em runtime.
@@ -98,14 +100,24 @@ static UIViewController *YTABCMakeExperimentsVC(id settingsViewController) {
         return nil;
     }
 
-    // Contexto de responder vivo (resolve YTExperimentsService, YTUserDefaults, ...).
-    id parentResponder = nil;
-    if ([settingsViewController respondsToSelector:@selector(parentResponder)]) {
-        parentResponder = [settingsViewController parentResponder];
+    // From the native ARM64 class hierarchy:
+    // YTSettingsViewController and YTSettingsExperimentsViewController both
+    // inherit YTStyledViewController. The child must receive the *current*
+    // Settings controller as parentResponder. Passing Settings.parentResponder
+    // bypasses a link in YouTube's responder/service-resolution chain.
+    id parentResponder = settingsViewController;
+    Class settingsClass = NSClassFromString(@"YTSettingsViewController");
+    if (!parentResponder || (settingsClass &&
+        ![parentResponder isKindOfClass:settingsClass])) {
+        NSLog(@"[YTABConfig NativeExp] missing live YTSettingsViewController parent");
+        return nil;
     }
-    if (!parentResponder) parentResponder = settingsViewController; // ainda está na chain
-    if (!parentResponder) {
-        NSLog(@"[YTABConfig NativeExp] sem parentResponder vivo pra injetar");
+
+    Method nativeInit = class_getInstanceMethod(experimentsClass,
+        @selector(initWithParentResponder:));
+    if (!nativeInit || !method_getTypeEncoding(nativeInit) ||
+        strcmp(method_getTypeEncoding(nativeInit), "@24@0:8@16") != 0) {
+        NSLog(@"[YTABConfig NativeExp] constructor ABI mismatch");
         return nil;
     }
 
