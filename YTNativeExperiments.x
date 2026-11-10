@@ -95,9 +95,16 @@ static UIViewController *YTABCTopMostController(void) {
 // Constrói a VC nativa injetando o parentResponder vivo do settings VC.
 // Retorna nil (com log) se algo faltar. Compartilhado pelos dois launchers.
 static UIViewController *YTABCMakeExperimentsVC(id settingsViewController) {
-    Class experimentsClass = NSClassFromString(@"YTSettingsExperimentsTopViewController");
+    // Use the actual experiments root: this is the class whose native
+    // lifecycle owns the tabs, search and results. The older Top controller
+    // remains an explicit option in the Native Tools menu, not the default.
+    Class experimentsClass = NSClassFromString(@"YTSettingsExperimentsViewController");
     if (!experimentsClass) {
-        NSLog(@"[YTABConfig NativeExp] YTSettingsExperimentsTopViewController ausente neste build");
+        NSLog(@"[YTABConfig NativeExp] YTSettingsExperimentsViewController absent; refusing to substitute an unrelated controller");
+        return nil;
+    }
+    if (![experimentsClass isSubclassOfClass:UIViewController.class]) {
+        NSLog(@"[YTABConfig NativeExp] native experiments root is not a UIViewController");
         return nil;
     }
 
@@ -122,7 +129,8 @@ static UIViewController *YTABCMakeExperimentsVC(id settingsViewController) {
         return nil;
     }
 
-    // Install study UI hooks on demand, never during cold start.
+    // The original study hooks are only installed when the user explicitly
+    // opens a native screen. They observe; they do not fabricate studies.
     YTABCInstallNativeStudyControlsHooks();
 
     UIViewController *experimentsVC = nil;
@@ -151,6 +159,7 @@ BOOL YTABCPushNativeExperiments(id settingsViewController) {
     UIViewController *experimentsVC = YTABCMakeExperimentsVC(settingsViewController);
     if (!experimentsVC) return NO;
 
+    if (![NSThread isMainThread]) return NO;
     if (![settingsViewController respondsToSelector:@selector(pushViewController:)]) {
         NSLog(@"[YTABConfig NativeExp] settings VC não responde pushViewController:");
         return NO;
@@ -172,6 +181,7 @@ BOOL YTABCPresentNativeExperiments(id settingsViewController) {
     UIViewController *experimentsVC = YTABCMakeExperimentsVC(settingsViewController);
     if (!experimentsVC) return NO;
 
+    if (![NSThread isMainThread]) return NO;
     UIViewController *presenter = YTABCTopMostController();
     if (!presenter) {
         NSLog(@"[YTABConfig NativeExp] sem presenter no topo");
