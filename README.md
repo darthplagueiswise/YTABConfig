@@ -86,6 +86,49 @@ The old incomplete `YTInternalIdentity.x` remains as uncompiled historical
 source; it must not be used to claim that an Employee mode exists. This is
 separate from exposing local debug UI controllers.
 
+## YouTube 21.43.5 startup CoreData crash — 2026-11-10
+
+Three independent iOS 27.0 `.ips` crash reports (09:13:45, 09:13:51,
+09:13:56) showed identical main-thread `EXC_CRASH / SIGABRT` stacks:
+`YTPingStoreImpl.init` → `YTInnerTubeCoreDataContext.init` →
+`YTCoreDataContext.initWithModelName:...` →
+`NSManagedObjectModel.initWithContentsOfURL:` →
+`CoreData _initWithContentsOfURL:options:` (exception thrown).
+The executable and tweak UUIDs were verified against the provided IPA and
+Feather `.deb`, respectively. The report has no exception *reason*, so the
+underlying failure (a missing resource in the installed IPA, a malformed
+model, iOS 27 .omo compatibility, or another hook interfering with lookup)
+is **not proven** by stack traces alone.
+
+The YouTube ARM64 initializer supplies `DataLibDataModel`. The original IPA
+contains `DataLibDataModel.momd/VersionInfo.plist` (current version
+`DataLibDataModel-20.27`), as well as compiled `.omo` and `.mom` files.
+The current `.mom` decodes as a valid NSKeyedArchiver binary plist.
+
+`YTABCoreDataModelCompatibility.m` hooks only
+`-[NSManagedObjectModel initWithContentsOfURL:]`. Normally it delegates to
+the original implementation unchanged. For an original URL inside
+`DataLibDataModel.momd` **and only if the original model load fails**, it
+locates the `VersionInfo.plist`-selected version's `.mom` file, invokes
+the same original CoreData initializer on a fresh model object, and returns
+the valid model if loaded. When neither load works, it rethrows the original
+exception rather than manufacturing a blank model or continuing with
+corrupt state. The logs include the CoreData exception name/reason to make
+follow-up diagnosis possible. This is a compatibility fallback, **not**
+proof of a resolved on-device crash.
+
+**Packaging requirement:** Feather/injection must preserve the entire
+`Payload/YouTube.app/DataLibDataModel.momd` directory. The tweak .deb does
+not contain or replace Google's proprietary model resources. If the
+installed app lacks the directory, reinstall from an IPA with the original
+model bundle intact. Running a different injected tweak suite can still
+alter the underlying process independently.
+
+The user-supplied `settings_experiments_study_header.flexb` is a 120-byte
+native study-header layout definition with `root`, `layerLabel`,
+`titleLabel`, `disclosureArrow`, and `linkLabel`. It is not the
+CoreData model and supplies no experiment query parameters or auth gates.
+
 ## Native experiments empty screen / runtime UI corrections
 
 The extracted YouTube 21.43.5 ARM64 image confirms that
