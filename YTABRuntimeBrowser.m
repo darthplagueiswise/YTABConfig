@@ -9,7 +9,7 @@ static NSString * const YTABRuntimeBrowserOverridesKey = @"YTABCRuntimeBrowserOv
 
 typedef NS_ENUM(NSInteger, YTABRuntimeImageScope) {
     YTABRuntimeImageScopeYouTube = 0,
-    YTABRuntimeImageScopeModule = 1,
+    YTABRuntimeImageScopeModule = 1, // all loaded app-bundled frameworks (not just Module_Framework)
     YTABRuntimeImageScopeAll = 2,
 };
 
@@ -235,6 +235,14 @@ BOOL YTABRuntimeBrowserPatchInstalled(NSString *patchKey) {
     }
 }
 
+// Passive observation is optional. It intercepts an eligible getter only
+// after an explicit user action; it never calls arbitrary methods just to
+// fill in a switch state. A getter can depend on receiver / arguments,
+// so the recorded BOOL is the last native result, not a global constant.
+BOOL YTABRuntimeBrowserObserveKey(NSString *patchKey) {
+    return YTABRuntimeInstallPatchKey(patchKey);
+}
+
 static void YTABRuntimeClearOverrides(void) {
     [[NSUserDefaults standardUserDefaults] removeObjectForKey:YTABRuntimeBrowserOverridesKey];
     YTABRuntimeRefreshOverrideCache();
@@ -262,13 +270,23 @@ static BOOL YTABRuntimeClassExcluded(NSString *className) {
 
 static YTABRuntimeImageScope YTABRuntimeScopeForImageName(NSString *imageName) {
     if (!imageName.length) return -1;
-    NSString *mainExecutable = [NSBundle mainBundle].executablePath;
-    if ([imageName isEqualToString:mainExecutable] ||
-        [imageName.lastPathComponent isEqualToString:mainExecutable.lastPathComponent]) {
+    NSBundle *bundle = [NSBundle mainBundle];
+    NSString *mainExecutable = bundle.executablePath;
+    if ([imageName isEqualToString:mainExecutable]) {
         return YTABRuntimeImageScopeYouTube;
     }
-    if ([imageName containsString:@"/Module_Framework.framework/"] ||
-        [imageName.lastPathComponent isEqualToString:@"Module_Framework"]) {
+
+    // Previous "Module" scope matched exactly ONE optional framework,
+    // while the All tab only combined that one image with the executable.
+    // Match every loaded image under the app's Frameworks directory,
+    // excluding injected tweak and hooking support binaries.
+    NSString *frameworksRoot = [[bundle.bundlePath
+        stringByAppendingPathComponent:@"Frameworks"] stringByAppendingString:@"/"];
+    if ([imageName hasPrefix:frameworksRoot]) {
+        NSString *leaf = imageName.lastPathComponent;
+        if ([leaf isEqualToString:@"YTABConfig.dylib"] ||
+            [leaf isEqualToString:@"CydiaSubstrate"] ||
+            [leaf isEqualToString:@"Substitute"]) return -1;
         return YTABRuntimeImageScopeModule;
     }
     return -1;
@@ -368,7 +386,7 @@ static NSArray<NSString *> *YTABRuntimeSearchTokens(NSString *query) {
     self.tableView.rowHeight = 58.0;
     self.tableView.estimatedRowHeight = 58.0;
 
-    self.scopeControl = [[UISegmentedControl alloc] initWithItems:@[@"YouTube", @"Module", @"All"]];
+    self.scopeControl = [[UISegmentedControl alloc] initWithItems:@[@"YouTube", @"Frameworks", @"All"]];
     self.scopeControl.selectedSegmentIndex = YTABRuntimeImageScopeYouTube;
     [self.scopeControl addTarget:self action:@selector(scopeChanged:)
                 forControlEvents:UIControlEventValueChanged];
