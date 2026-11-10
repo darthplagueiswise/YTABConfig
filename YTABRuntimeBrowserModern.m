@@ -26,20 +26,6 @@ typedef NS_ENUM(NSInteger, YTABModernPatchMode) {
     YTABModernPatchModeForceOn = 2,
 };
 
-static NSDictionary<NSString *, NSNumber *> *YTABModernStoredOverrides(void) {
-    id stored = [[NSUserDefaults standardUserDefaults] objectForKey:YTABModernOverridesKey];
-    if (![stored isKindOfClass:NSDictionary.class]) return @{};
-
-    NSMutableDictionary<NSString *, NSNumber *> *clean = [NSMutableDictionary dictionary];
-    [(NSDictionary *)stored enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL *stop) {
-        (void)stop;
-        if ([key isKindOfClass:NSString.class] && [value isKindOfClass:NSNumber.class]) {
-            clean[key] = @([(NSNumber *)value boolValue]);
-        }
-    }];
-    return clean.copy;
-}
-
 static YTABModernPatchMode YTABModernModeForKey(NSString *patchKey) {
     // A captured config getter uses the existing YTABC.* pref/key engine,
     // whereas generic Runtime methods use YTABCRuntimeBrowserOverrides.
