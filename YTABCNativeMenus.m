@@ -95,7 +95,36 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
     body.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
     body.adjustsFontForContentSizeCategory = YES;
     body.textColor = UIColor.labelColor;
-    body.text = self.report;
+    // Native typography separates section headings, observations and
+    // explanations instead of presenting one giant unformatted log.
+    NSMutableAttributedString *styled = [NSMutableAttributedString new];
+    NSParagraphStyle *paragraph = nil;
+    NSMutableParagraphStyle *spacing = [NSMutableParagraphStyle new];
+    spacing.lineSpacing = 4;
+    paragraph = [spacing copy];
+    for (NSString *line in [self.report componentsSeparatedByString:@"\n"]) {
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:
+            [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        BOOL sectionHeading = trimmed.length > 0 && trimmed.length < 55 &&
+            ![trimmed containsString:@"="] && ![trimmed containsString:@":"] &&
+            [trimmed isEqualToString:trimmed.uppercaseString];
+        BOOL keyValue = [trimmed containsString:@"="];
+        UIFont *font = sectionHeading
+            ? [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline]
+            : keyValue
+            ? [[UIFontMetrics metricsForTextStyle:UIFontTextStyleSubheadline]
+                scaledFontForFont:[UIFont monospacedSystemFontOfSize:13 weight:UIFontWeightRegular]]
+            : [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+        UIColor *color = sectionHeading ? UIColor.labelColor :
+            keyValue ? UIColor.secondaryLabelColor : UIColor.labelColor;
+        NSString *text = [line stringByAppendingString:@"\n"];
+        NSAttributedString *span = [[NSAttributedString alloc] initWithString:text
+            attributes:@{NSFontAttributeName: font,
+                         NSForegroundColorAttributeName: color,
+                         NSParagraphStyleAttributeName: paragraph}];
+        [styled appendAttributedString:span];
+    }
+    body.attributedText = styled;
     body.textContainerInset = UIEdgeInsetsMake(18, 16, 18, 16);
     body.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:body];
@@ -469,8 +498,13 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
             cat, sections[cat] ? @"loaded" : @"not loaded",
             network[[prefix stringByAppendingString:@"UpdateCalls"]] ?: @0,
             network[[prefix stringByAppendingString:@"HadEntry"]] ?: @NO]];
+        [lines addObject:[NSString stringWithFormat:
+            @"Entry type %@ | hasNavigationEndpoint %@ | hasURLEndpoint %@",
+            network[[prefix stringByAppendingString:@"EntryClass"]] ?: @"not observed",
+            network[[prefix stringByAppendingString:@"HasNavigationEndpoint"]] ?: [NSNull null],
+            network[[prefix stringByAppendingString:@"HasURLEndpoint"]] ?: [NSNull null]];
     }
-    [lines addObject:@"Not loaded means no native section items were available. A declared category is not proof of eligibility."];
+    [lines addObject:@"Categories 30/37 are navigation-endpoint entries in the original YouTube 21.43.5 settings dispatcher. A missing loaded section cannot be fixed by revealing a header."];
 
     [lines addObject:@"\nNATIVE IDENTITY / ELIGIBILITY SIGNALS"];
     for (NSString *key in @[@"nativeGooglerCheckObserved", @"nativeHasGooglerAccount",
