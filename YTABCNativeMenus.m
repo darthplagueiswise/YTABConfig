@@ -216,13 +216,16 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
         return NO;
     }
     id owner = self.settingsOwner;
-    id responder = YTABCMessageObject(owner, NSSelectorFromString(@"parentResponder"));
-    if (!responder) responder = owner;
-    if (!responder) {
+    Class settingsClass = NSClassFromString(@"YTSettingsViewController");
+    if (!owner || (settingsClass && ![owner isKindOfClass:settingsClass])) {
         YTABCShowNotice(self, @"Missing native context",
-                        @"The YouTube settings responder is no longer available.");
+                        @"The original YouTube settings controller is no longer available.");
         return NO;
     }
+    // The native experiments root is a sibling of YTSettingsViewController
+    // under YTStyledViewController. Use the live Settings VC itself as
+    // parentResponder; NOT Settings.parentResponder (which skips the VC).
+    id responder = owner;
     @try {
         id controller = ((id (*)(id, SEL, id))objc_msgSend)(
             [cls alloc], initializer, responder);
