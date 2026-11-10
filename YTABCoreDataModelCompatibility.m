@@ -6,8 +6,9 @@
 // The native context supplies "DataLibDataModel" (ARM64 VA 0x100343378).
 // A valid compiled .mom is included in the supplied IPA alongside the .omo.
 //
-// We only retry a failed load of this particular model, using the ORIGINAL
-// NSManagedObjectModel initializer on its VersionInfo-selected .mom. This does
+// We prefer the verified VersionInfo-selected .mom BEFORE the original .momd
+// path, avoiding the startup abort caused by attempting the optimized model.
+// Both loads still use the ORIGINAL NSManagedObjectModel initializer. This does
 // not hook any flag, identity, request, database migration, or global model.
 // No empty schema is fabricated. Missing or corrupt model resources still
 // fail in the original CoreData path, with a diagnostic log.
@@ -53,43 +54,41 @@ static NSURL *YTABCDataLibUnoptimizedModelURL(NSURL *source) {
 
 static id YTABCoreDataInitCompatibility(id receiver, SEL selector, NSURL *url) {
     if (!sYTABCOriginalModelInit) return nil;
-    if (!YTABIsDataLibModelURL(url)) {
+    if (!YTABIsDataLibModelURL(url))
         return sYTABCOriginalModelInit(receiver, selector, url);
-    }
-    NSException *sourceException = nil;
-    @try {
-        id model = sYTABCOriginalModelInit(receiver, selector, url);
-        if (model) return model;
-    } @catch (NSException *e) {
-        sourceException = e;
-        NSLog(@"[YTABC CoreData] DataLibDataModel original CoreData exception: %@ — %@",
-              e.name, e.reason);
-    }
 
+    // Earlier recovery tried the original .momd first and only then the
+    // unoptimized .mom after an exception. The 2026-11-10 10:17 IPS still
+    // aborts inside that original CoreData initializer with this hook in the
+    // stack. Prefer the actual VersionInfo-selected .mom BEFORE invoking
+    // the optimized .momd loader; otherwise the app may already terminate.
     NSURL *momURL = YTABCDataLibUnoptimizedModelURL(url);
-    if (momURL && ![url isEqual:momURL]) {
-        NSLog(@"[YTABC CoreData] Retrying the same DataLibDataModel version via %@", momURL.lastPathComponent);
-        @try {
-            // The first initializer may have partially initialized receiver.
-            // Start the fallback on a fresh object and use the original IMP.
-            id allocated = [NSManagedObjectModel alloc];
-            id model = sYTABCOriginalModelInit(allocated, selector, momURL);
-            if (model) {
-                NSLog(@"[YTABC CoreData] DataLibDataModel fallback .mom loaded");
-                return model;
+    if (momURL && ![momURL isEqual:url]) {
+        NSData *contents = [NSData dataWithContentsOfURL:momURL
+                                                 options:NSDataReadingMappedIfSafe
+                                                   error:nil];
+        BOOL plistHeader = contents.length >= 8 &&
+            memcmp(contents.bytes, "bplist00", 8) == 0;
+        if (plistHeader) {
+            NSLog(@"[YTABC CoreData] Loading VersionInfo-selected %@ before optimized .momd",
+                  momURL.lastPathComponent);
+            @try {
+                id model = sYTABCOriginalModelInit(receiver, selector, momURL);
+                if (model) return model;
+            } @catch (NSException *e) {
+                NSLog(@"[YTABC CoreData] Preferred model load failed: %@ / %@",
+                      e.name, e.reason);
             }
-            NSLog(@"[YTABC CoreData] Fallback returned nil");
-        } @catch (NSException *e) {
-            NSLog(@"[YTABC CoreData] DataLibDataModel fallback failed: %@ — %@",
-                  e.name, e.reason);
+        } else {
+            NSLog(@"[YTABC CoreData] Selected .mom missing/invalid. Falling back to native path.");
         }
     } else {
-        NSLog(@"[YTABC CoreData] DataLibDataModel .mom unavailable in installed IPA; "
-              @"verify the full .momd directory was retained by the sideload packager");
+        NSLog(@"[YTABC CoreData] No readable VersionInfo-selected .mom available.");
     }
-    // Never return an invented or empty managed object model.
-    if (sourceException) @throw sourceException;
-    return nil;
+
+    // Last resort: preserve the YouTube-native .momd loading behavior.
+    // Do not fabricate a model or swallow an unrelated exception.
+    return sYTABCOriginalModelInit([NSManagedObjectModel alloc], selector, url);
 }
 
 void YTABCInstallCoreDataModelCompatibility(void) {
