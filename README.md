@@ -92,10 +92,16 @@ The **Open YouTube native tools** row is now available inside the existing
 **Feature Lab** settings category. It is a local navigation hub, not a
 server-authorized employee/internal account mode.
 
+The **YouTube 21.43.5 ARM64 disassembly** confirms the main experiment
+view controller instantiates its Results controllers internally
+(`0x101434748`, `YTSettingsExperimentsResultsViewController` class reference
+`0x10cbdada8`). Results must therefore be opened through the parent
+experiments screen, **not** through a standalone Results initializer.
+
 The hub exposes separate, guarded launchers for the native
 `YTSettingsExperimentsTopViewController` (existing push/modal openers),
 `YTSettingsExperimentsViewController` (search and tabs), and
-`YTSettingsExperimentsResultsViewController` (results). Each constructor is
+`YTSettingsExperimentsResultsViewController` (results, owned by the root). Each constructor is
 checked at runtime, receives the live settings `parentResponder`, and
 reports failures without trying arbitrary initializers. A results page may
 be empty unless the native experiment service has results available.
