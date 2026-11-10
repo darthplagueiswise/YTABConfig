@@ -82,7 +82,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     _selectorLabel.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleSubheadline]
         scaledFontForFont:[UIFont systemFontOfSize:13.0 weight:UIFontWeightMedium]];
     _selectorLabel.adjustsFontForContentSizeCategory = YES;
-    _selectorLabel.numberOfLines = 1;
+    _selectorLabel.numberOfLines = 2;
     _selectorLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
     [_selectorLabel setContentCompressionResistancePriority:UILayoutPriorityDefaultLow
                                                    forAxis:UILayoutConstraintAxisHorizontal];
@@ -112,11 +112,11 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     // arguments may be unavailable, and invoking arbitrary getters can
     // change app state. Render a neutral question mark until it executes.
     _unknownLabel = [UILabel new];
-    _unknownLabel.text = @"?";
+    _unknownLabel.text = @"—";
     _unknownLabel.textAlignment = NSTextAlignmentCenter;
     _unknownLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
     _unknownLabel.textColor = UIColor.tertiaryLabelColor;
-    _unknownLabel.accessibilityLabel = @"System value not observed yet";
+    _unknownLabel.accessibilityLabel = @"Native result not observed; use Observe native calls from the context menu";
     _unknownLabel.hidden = YES;
 
     _modeButton = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -164,15 +164,15 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
         headline, _ownerLabel, stateRow
     ]];
     stack.axis = UILayoutConstraintAxisVertical;
-    stack.spacing = 4.0;
+    stack.spacing = 2.0;
     stack.translatesAutoresizingMaskIntoConstraints = NO;
     [self.contentView addSubview:stack];
     [NSLayoutConstraint activateConstraints:@[
         [stack.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
         [stack.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
-        [stack.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:9],
-        [stack.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-9],
-        [_modeButton.heightAnchor constraintGreaterThanOrEqualToConstant:30],
+        [stack.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:6],
+        [stack.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-6],
+        [_modeButton.heightAnchor constraintGreaterThanOrEqualToConstant:26],
     ]];
     return self;
 }
@@ -184,6 +184,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 @property(nonatomic, strong) UISearchBar *pinnedSearchBar;
 @property(nonatomic) BOOL usesNativeSearchToolbar;
 @property(nonatomic) BOOL priorToolbarHidden;
+@property(nonatomic) BOOL capturedPriorToolbarHidden;
 @end
 
 @implementation YTABRuntimeBrowserModernViewController
@@ -216,7 +217,10 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     self.navigationItem.titleView = nil;
     self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
     self.tableView.rowHeight = UITableViewAutomaticDimension;
-    self.tableView.estimatedRowHeight = 86.0;
+    self.tableView.estimatedRowHeight = 74.0;
+    self.tableView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentAutomatic;
+    self.tableView.contentInset = UIEdgeInsetsMake(0, 0, 18, 0);
+    if (@available(iOS 15.0, *)) self.tableView.sectionHeaderTopPadding = 0;
     self.tableView.separatorInset = UIEdgeInsetsMake(0, 16, 0, 16);
     self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
     self.definesPresentationContext = YES;
@@ -224,8 +228,8 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
         selector:@selector(ytab_nativeSampleDidChange:)
         name:YTABRuntimeNativeSampleChangedNotification object:nil];
 
-    // Use iOS 26's real UINavigationItem search integration. The prior
-    // pinned table-header workaround disabled UIKit's toolbar morphing.
+    // Use real UIKit toolbar placement. IntegratedButton keeps the search
+    // collapsed until tapped and supplies the native Liquid Glass transition.
     // Only pre-26 builds use the separate fixed header search field.
     self.usesNativeSearchToolbar = NO;
     UISearchController *nativeSearch = [self ytab_ownedSearchController];
@@ -235,7 +239,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
             self.navigationItem.searchController = nativeSearch;
             self.navigationItem.hidesSearchBarWhenScrolling = NO;
             self.navigationItem.preferredSearchBarPlacement =
-                UINavigationItemSearchBarPlacementIntegrated;
+                UINavigationItemSearchBarPlacementIntegratedButton;
             self.navigationItem.searchBarPlacementAllowsToolbarIntegration = YES;
             nativeSearch.searchBar.placeholder = @"Class or selector";
             nativeSearch.searchBar.autocorrectionType = UITextAutocorrectionTypeNo;
@@ -301,8 +305,12 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 }
 
 - (void)ytab_nativeSampleDidChange:(NSNotification *)notification {
-    (void)notification;
-    if (![NSThread isMainThread]) return;
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self ytab_nativeSampleDidChange:notification];
+        });
+        return;
+    }
     if (self.isViewLoaded && self.view.window) {
         // The getter ran for real. Update the visible switches without
         // re-invoking any YouTube method or changing the current filter.
@@ -315,7 +323,11 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     self.navigationItem.titleView = nil;
     self.navigationItem.hidesSearchBarWhenScrolling = NO;
     if (self.usesNativeSearchToolbar && self.navigationController) {
-        self.priorToolbarHidden = self.navigationController.isToolbarHidden;
+        // Preserve this across child screens and subsequent reappearances.
+        if (!self.capturedPriorToolbarHidden) {
+            self.priorToolbarHidden = self.navigationController.isToolbarHidden;
+            self.capturedPriorToolbarHidden = YES;
+        }
         [self.navigationController setToolbarHidden:NO animated:animated];
     }
     [self.tableView reloadData];
@@ -327,6 +339,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
         (self.isMovingFromParentViewController || self.isBeingDismissed)) {
         [self.navigationController setToolbarHidden:self.priorToolbarHidden
                                           animated:animated];
+        self.capturedPriorToolbarHidden = NO;
     }
 }
 
@@ -390,7 +403,9 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     (void)section;
-    return @"Flags = original BOOLs captured at startup. Methods = general Objective-C methods, not global flags. Long-press to reset overrides.";
+    // Native bottom-toolbar search can overlap long section footers.
+    // Descriptions remain available through the row detail view.
+    return nil;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView
@@ -412,7 +427,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
                                isClassMethod ? @"+" : @"-", selectorName];
     BOOL configFlag = YTABModernBoolValue(method, @"configFlag");
     cell.ownerLabel.text = configFlag
-        ? [NSString stringWithFormat:@"%@ · original captured at launch", className]
+        ? [NSString stringWithFormat:@"%@ · captured at launch", className]
         : (imageName.length ? [NSString stringWithFormat:@"%@ · %@", className, imageName]
                             : className);
 
@@ -435,10 +450,12 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
         ? UIColor.systemBlueColor : UIColor.systemGreenColor;
     cell.statusLabel.textColor = hasOverride
         ? UIColor.systemBlueColor : UIColor.secondaryLabelColor;
-    cell.statusLabel.text = [NSString stringWithFormat:
-        @"Native %@ · Effective %@ · %@",
-        nativeText, effectiveText,
-        hasOverride ? (installed ? @"Override" : @"Override pending") : @"System"];
+    cell.statusLabel.text = nativeKnown
+        ? [NSString stringWithFormat:@"Native %@ · Effective %@%@",
+            nativeText, effectiveText,
+            hasOverride && !installed ? @" · Pending" : @""]
+        : [NSString stringWithFormat:@"Native not observed · Effective %@",
+            effectiveText];
 
     [cell.overrideSwitch removeTarget:nil action:NULL forControlEvents:UIControlEventValueChanged];
     [cell.overrideSwitch setOn:effectiveKnown && effectiveOn animated:NO];
@@ -447,6 +464,8 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     cell.overrideSwitch.accessibilityValue = [NSString stringWithFormat:
         @"Effective %@, %@. Last native %@",
         effectiveText, hasOverride ? @"override" : @"system", nativeText];
+    cell.unknownLabel.accessibilityHint =
+        @"The native Objective-C getter has not executed. This is not OFF or evidence of eligibility.";
     objc_setAssociatedObject(cell.overrideSwitch, YTABModernPatchKeyAssociation,
                              key, OBJC_ASSOCIATION_COPY_NONATOMIC);
     [cell.overrideSwitch addTarget:self action:@selector(overrideSwitchChanged:)
@@ -485,7 +504,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     cell.modeButton.accessibilityValue = modeLabel;
     cell.accessibilityLabel = [NSString stringWithFormat:@"%@, %@, native %@",
                                selectorName, modeLabel, nativeText];
-    cell.accessibilityHint = @"Tap for details. Long press the row or switch to remove an override.";
+    cell.accessibilityHint = @"Tap for details. Long press for System, Force ON, Force OFF and passive observation.";
     return cell;
 }
 
