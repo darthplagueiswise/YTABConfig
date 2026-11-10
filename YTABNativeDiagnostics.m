@@ -37,22 +37,44 @@ static void YTABConfigurationSync(id target, SEL selector, id syncer, id after, 
     if (originalConfigurationSync) originalConfigurationSync(target, selector, syncer, after, callback);
 }
 
+// Each selector has a separate, default-off local override. Native results are
+// recorded separately from effective results, so diagnostics stay meaningful.
+static BOOL (*originalGooglerForAccount)(id,SEL,id);
+static BOOL YTABGooglerForAccount(id target, SEL selector, id account) {
+    BOOL nativeValue = originalGooglerForAccount ? originalGooglerForAccount(target,selector,account) : NO;
+    BOOL forced = YTABNativeTrace(@"YTABCForceIsGooglerAccount");
+    if (YTABNativeTrace(@"YTABCTracePhenotype"))
+        NSLog(@"[YTABC Phenotype] isGooglerAccount: native=%@ effective=%@",
+              nativeValue ? @"YES" : @"NO", (forced || nativeValue) ? @"YES" : @"NO");
+    return forced ? YES : nativeValue;
+}
+
 static BOOL (*originalGoogler)(id,SEL);
 static BOOL YTABGoogler(id target, SEL selector) {
-    BOOL value = originalGoogler ? originalGoogler(target,selector) : NO;
-    @synchronized([NSProcessInfo processInfo]) { sawGooglerCheck = YES; lastNativeGoogler = value; }
+    BOOL nativeValue = originalGoogler ? originalGoogler(target,selector) : NO;
+    BOOL forced = YTABNativeTrace(@"YTABCForceHasGooglerAccount");
+    @synchronized([NSProcessInfo processInfo]) {
+        sawGooglerCheck = YES;
+        lastNativeGoogler = nativeValue;
+    }
     if (YTABNativeTrace(@"YTABCTracePhenotype"))
-        NSLog(@"[YTABC Phenotype] native hasGooglerAccount=%@", value ? @"YES" : @"NO");
-    return value;
+        NSLog(@"[YTABC Phenotype] hasGooglerAccount native=%@ effective=%@",
+              nativeValue ? @"YES" : @"NO", (forced || nativeValue) ? @"YES" : @"NO");
+    return forced ? YES : nativeValue;
 }
 
 static BOOL (*originalInternal)(id,SEL);
 static BOOL YTABInternal(id target, SEL selector) {
-    BOOL value = originalInternal ? originalInternal(target,selector) : NO;
-    @synchronized([NSProcessInfo processInfo]) { sawInternalCheck = YES; lastNativeInternal = value; }
+    BOOL nativeValue = originalInternal ? originalInternal(target,selector) : NO;
+    BOOL forced = YTABNativeTrace(@"YTABCForceStandardInternalSyncer");
+    @synchronized([NSProcessInfo processInfo]) {
+        sawInternalCheck = YES;
+        lastNativeInternal = nativeValue;
+    }
     if (YTABNativeTrace(@"YTABCTracePhenotype"))
-        NSLog(@"[YTABC Phenotype] native isInternalHeterodyneSyncer=%@", value ? @"YES" : @"NO");
-    return value;
+        NSLog(@"[YTABC Phenotype] isInternalHeterodyneSyncer native=%@ effective=%@",
+              nativeValue ? @"YES" : @"NO", (forced || nativeValue) ? @"YES" : @"NO");
+    return forced ? YES : nativeValue;
 }
 
 static void (*originalSearch)(id,SEL,id,id,id);
@@ -103,6 +125,7 @@ void YTABCInstallNativeDiagnostics(void) {
     Class flat = objc_lookUpClass("PHTFlatFilePhenotype");
     Class ex = objc_lookUpClass("YTExperimentsServiceImpl");
     YTABInstallChecked(pht, @"syncWithCallback:", "v24@0:8@?16", (IMP)YTABSync, (IMP *)&originalSync);
+    YTABInstallChecked(pht, @"isGooglerAccount:", "B24@0:8@16", (IMP)YTABGooglerForAccount, (IMP *)&originalGooglerForAccount);
     YTABInstallChecked(pht, @"hasGooglerAccount", "B16@0:8", (IMP)YTABGoogler, (IMP *)&originalGoogler);
     YTABInstallChecked(pht, @"isInternalHeterodyneSyncer", "B16@0:8", (IMP)YTABInternal, (IMP *)&originalInternal);
     YTABInstallChecked(flat, @"syncExperimentsWithServerInternal:syncAfterConfiguration:callback:",
@@ -161,8 +184,11 @@ NSDictionary<NSString *, id> *YTABCCopyNativeDiagnostics(void) {
             @"nativeOptOutCalls": @(optOutCalls),
             @"nativeGooglerCheckObserved": @(sawGooglerCheck),
             @"nativeHasGooglerAccount": sawGooglerCheck ? @(lastNativeGoogler) : [NSNull null],
+            @"forceIsGooglerAccount": @(YTABNativeTrace(@"YTABCForceIsGooglerAccount")),
+            @"forceHasGooglerAccount": @(YTABNativeTrace(@"YTABCForceHasGooglerAccount")),
             @"nativeInternalCheckObserved": @(sawInternalCheck),
             @"nativeIsInternalSyncer": sawInternalCheck ? @(lastNativeInternal) : [NSNull null],
+            @"forceStandardInternalSyncer": @(YTABNativeTrace(@"YTABCForceStandardInternalSyncer")),
             @"installedNativeHooks": @(installedMethods.count)
         };
     }
