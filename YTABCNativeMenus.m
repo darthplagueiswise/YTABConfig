@@ -502,7 +502,7 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
             @"Entry type %@ | hasNavigationEndpoint %@ | hasURLEndpoint %@",
             network[[prefix stringByAppendingString:@"EntryClass"]] ?: @"not observed",
             network[[prefix stringByAppendingString:@"HasNavigationEndpoint"]] ?: [NSNull null],
-            network[[prefix stringByAppendingString:@"HasURLEndpoint"]] ?: [NSNull null]];
+            network[[prefix stringByAppendingString:@"HasURLEndpoint"]] ?: [NSNull null]]];
     }
     [lines addObject:@"Categories 30/37 are navigation-endpoint entries in the original YouTube 21.43.5 settings dispatcher. A missing loaded section cannot be fixed by revealing a header."];
 
