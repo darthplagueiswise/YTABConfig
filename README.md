@@ -80,6 +80,37 @@ Raw Lab). Thus, the word `All` means all **supported, currently
 enumerated Objective-C getters within those app images**, not the
 entire app. Merely discovering a selector does not install an override.
 
+## Real native BOOLs versus generic Objective-C methods (21.43.5)
+
+The earlier screenshot displayed `?` next to `_ASCollectionPendingState`
+methods because general Objective-C methods are not guaranteed to be called
+after a hook is installed; their result may depend on the receiver and
+arguments. Treating unknown as false would fabricate a value.
+
+The Runtime Patch Browser now defaults to **Flags**, powered by the existing
+`YTGlobalConfig`, `YTColdConfig`, `YTHotConfig` original native getter
+cache obtained at launch by the PoomSmart-compatible hook path. The UI
+reads `YTABCRuntimeValuesSnapshot` and `YTABCNativeValue` directly; config
+override changes delegate to `YTABCSetOverride` / `YTABCClearOverride`,
+rather than writing an independent override dictionary or duplicating the
+config hooks. Native true = green, forced true = blue; forced false stays
+off with a blue override label. Long-press Remove override (System) restores
+the cached original behavior. `Flags` will be empty if native config
+objects weren't captured (including when YTABConfig's main switch is off
+at launch). This is reported explicitly instead of showing false values.
+
+`Methods` isolates generic runtime Objective-C BOOL methods from the
+main YouTube Mach-O. Their native value remains unknown until actually
+observed, including argument- and receiver-dependent selectors. `Overrides`
+shows only modified known config flags and runtime method entries.
+
+The old `Frameworks` tab has been removed. The supplied sideload IPA's
+`YouTube.app/Frameworks` includes CydiaSubstrate and many injected tweak
+binaries, plus Widevine DRM and libswiftCompatibilitySpan; this directory
+is not another YouTube feature-flag source. No second config hook system
+is installed. `Methods` is not a universal function browser; it enumerates
+compatible Objective-C BOOL-returning selectors only.
+
 ## Operational contract
 
 - Runs inside the iOS YouTube app; YouTube 16.29.4 and newer are the supported
