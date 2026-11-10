@@ -42,6 +42,44 @@ UIKit decides the surrounding native navigation material; the tweak does
 not fake Liquid Glass using custom blur overlays. Source-level behavior
 is verifiable; exact presentation on iOS 27 needs an on-device test.
 
+## Runtime Patch Browser: observed system BOOL versus overrides
+
+The old Runtime Patch Browser did **not** represent the current native BOOL
+for getters that had never executed while instrumented. It displayed a
+false-looking switch in those cases. It also only scanned the app main binary
+and one optional Module_Framework.framework under the misleading `All` tab.
+
+Revised state behavior:
+
+- **System ON (last native getter result true):** green ON UIKit switch.
+- **Override ON (forced true):** blue ON UIKit switch regardless of native.
+- **Override OFF (forced false):** OFF switch, blue Override label even if
+  the last native getter returned true.
+- **System unknown:** visible `?` instead of an OFF switch, because it would
+  be incorrect to invoke unknown getters on arbitrary receivers or argument
+  values merely to populate the UI. `Native` values are the last observed
+  return, not a timeless class-wide property.
+- Long-press the row **or** its UISwitch for a native UIKit context menu.
+  `Remove override (System)` immediately removes that selector's stored
+  override and restores pass-through; `Force ON/OFF` remain available.
+  The optional `Observe native calls (pass-through)` installs a transparent
+  original-preserving hook for that getter without invoking it; future
+  native calls update the visible switch via a coalesced main-thread
+  notification.
+
+Scope labels now mean: `YouTube` = the original main executable;
+`Frameworks` = all **currently loaded** in-app framework images under
+`YouTube.app/Frameworks/` (excluding injected tweak/support dylibs);
+`All` = union of those two. Enumeration reads Objective-C runtime
+classes and eligible BOOL/char-return instance/class methods with zero
+or one supported argument. It does **not** cover all app logic:
+not-yet-loaded classes, C/C++/Swift-only functions, generic non-BOOL
+methods, multiple-argument methods, system images, or separately managed
+`YTGlobalConfig`/`YTColdConfig`/`YTHotConfig` getters (these remain in
+Raw Lab). Thus, the word `All` means all **supported, currently
+enumerated Objective-C getters within those app images**, not the
+entire app. Merely discovering a selector does not install an override.
+
 ## Operational contract
 
 - Runs inside the iOS YouTube app; YouTube 16.29.4 and newer are the supported
