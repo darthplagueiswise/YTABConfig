@@ -9,6 +9,9 @@
 #import <objc/message.h>
 #import <substrate.h>
 #import <stdlib.h>
+extern NSDictionary<NSString *, id> *YTABCCopyNativeExperimentsHealth(void);
+extern NSDictionary<NSString *, id> *YTABCCopyNativeDiagnostics(void);
+extern BOOL YTABCRetryNativeExperimentsSelectedTab(void);
 
 static __weak id sYTABCObservedPlaybackOverlay;
 static void (*sYTABCOriginalInstallGesture)(id, SEL);
@@ -85,6 +88,12 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
         @{
             @"title": @"Native experiment screens",
             @"rows": @[
+                @{@"title": @"Why is native experiments blank?",
+                  @"subtitle": @"Inspect parentResponder, native tab count, search calls and results received",
+                  @"kind": @"experimentsHealth"},
+                @{@"title": @"Retry current native experiments tab",
+                  @"subtitle": @"Ask the real view controller to reload its selected tab",
+                  @"kind": @"experimentsRetry"},
                 @{@"title": @"Studies (original navigation)",
                   @"subtitle": @"YTSettingsExperimentsTopViewController, via the existing native opener",
                   @"kind": @"studies",
@@ -296,6 +305,25 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
     }
 }
 
+- (void)showExperimentsHealth {
+    NSDictionary *ui = YTABCCopyNativeExperimentsHealth() ?: @{};
+    NSDictionary *network = YTABCCopyNativeDiagnostics() ?: @{};
+    NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithObject:
+        @"NATIVE VIEW CONTROLLER"];
+    for (NSString *key in [[ui allKeys] sortedArrayUsingSelector:@selector(compare:)]) {
+        [lines addObject:[NSString stringWithFormat:@"%@ = %@", key, ui[key]]];
+    }
+    [lines addObject:@"\nNATIVE EXPERIMENT SERVICE"];
+    for (NSString *key in @[@"nativeExperimentsServiceObserved", @"nativeSearchCalls",
+                             @"nativeOptInCalls", @"nativeOptOutCalls",
+                             @"nativeHasGooglerAccount", @"nativeIsInternalSyncer"]) {
+        if (network[key])
+            [lines addObject:[NSString stringWithFormat:@"%@ = %@", key, network[key]]];
+    }
+    [lines addObject:@"\nAn empty result does not identify a specific server gate. Check whether search ran and whether result sections arrived."];
+    YTABCShowNotice(self, @"Experiments initialization", [lines componentsJoinedByString:@"\n"]);
+}
+
 - (void)showInventory:(NSString *)kind {
     NSArray<NSString *> *classes = @[];
     NSString *title = @"Runtime inventory";
@@ -336,7 +364,14 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
                                         [(NSUInteger)indexPath.row];
     NSString *kind = entry[@"kind"];
     id owner = self.settingsOwner;
-    if ([kind isEqualToString:@"studies"]) {
+    if ([kind isEqualToString:@"experimentsHealth"]) {
+        [self showExperimentsHealth];
+    } else if ([kind isEqualToString:@"experimentsRetry"]) {
+        BOOL queued = YTABCRetryNativeExperimentsSelectedTab();
+        YTABCShowNotice(self, @"Native experiments reload", queued
+            ? @"Called updateDataForTab: on the existing native selected tab. Check Health for changes."
+            : @"No live experiments root with a valid selected tab; use the original launcher first.");
+    } else if ([kind isEqualToString:@"studies"]) {
         extern BOOL YTABCPushNativeExperiments(id);
         if (!YTABCPushNativeExperiments(owner)) {
             YTABCShowNotice(self, @"Native studies unavailable",
