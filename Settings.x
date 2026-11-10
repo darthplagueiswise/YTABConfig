@@ -265,6 +265,14 @@ BOOL YTABResetAllRuntimeOverrides(
 
 %end
 
+// The section-item manager owns the real _dataDelegate used to publish
+// category headers/items. Keep only a weak reference for the optional local
+// reveal controller; never instantiate or fabricate a manager.
+static __weak id sYTABCLiveSectionItemManager;
+id YTABCLiveSettingsSectionItemManager(void) {
+    return sYTABCLiveSectionItemManager;
+}
+
 %hook YTSettingsSectionItemManager
 
 %new(v@:@)
@@ -565,6 +573,7 @@ BOOL YTABResetAllRuntimeOverrides(
 }
 
 - (void)updateSectionForCategory:(NSUInteger)category withEntry:(id)entry {
+    sYTABCLiveSectionItemManager = self;
     // Observe whether YouTube actually asks to construct categories 30/37.
     // Do not generate entries for missing or account-gated sections.
     extern void YTABCRecordSettingsCategoryUpdate(NSUInteger, id);
