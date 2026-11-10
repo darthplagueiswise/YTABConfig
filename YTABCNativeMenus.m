@@ -142,32 +142,31 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
         @{
             @"title": @"Native experiment screens",
             @"rows": @[
-                @{@"title": @"Why is native experiments blank?",
-                  @"subtitle": @"Inspect parentResponder, native tab count, search calls and results received",
-                  @"kind": @"experimentsHealth"},
-                @{@"title": @"Retry current native experiments tab",
-                  @"subtitle": @"Ask the real view controller to reload its selected tab",
-                  @"kind": @"experimentsRetry"},
-                @{@"title": @"Study layout, badge & opt-in state",
-                  @"subtitle": @"Real native .flexb layout calls, study rows, ineligible badge, and opt-in switch callbacks",
-                  @"kind": @"studyControlsHealth"},
-                @{@"title": @"Studies (original navigation)",
-                  @"subtitle": @"YTSettingsExperimentsTopViewController, via the existing native opener",
+                // This exact root constructs the native results controller,
+                // per original ARM64: classref 0x10cbdada8 (0x101434748).
+                // YTSettingsExperimentsResultsViewController is a child, not
+                // an independently launchable menu.
+                @{@"title": @"Open experiments — native navigation",
+                  @"subtitle": @"Use YTSettingsExperimentsViewController with the live Settings responder for tabs and studies",
                   @"kind": @"studies",
-                  @"class": @"YTSettingsExperimentsTopViewController"},
-                // Verified from the 21.43.5 ARM64 disassembly:
-                // -[YTSettingsExperimentsViewController initWithParentResponder:]
-                // constructs YTSettingsExperimentsResultsViewController itself
-                // (classref 0x10cbdada8, instruction VA 0x101434748).
-                // Results/Study cells are child views, not standalone menu roots.
-                @{@"title": @"Native experiments: search, tabs and results",
-                  @"subtitle": @"Open the original experiments root. It constructs its own results controllers, study sections and opt-in cells.",
-                  @"kind": @"controller",
                   @"class": @"YTSettingsExperimentsViewController"},
-                @{@"title": @"Studies (modal)",
-                  @"subtitle": @"Native controller in a dismissible navigation sheet",
+                @{@"title": @"Open experiments — modal",
+                  @"subtitle": @"Same native root in a dismissible navigation sheet",
                   @"kind": @"studiesModal",
-                  @"class": @"YTSettingsExperimentsTopViewController"}
+                  @"class": @"YTSettingsExperimentsViewController"},
+                @{@"title": @"Open legacy Studies Top controller",
+                  @"subtitle": @"Alternate native Top controller, only if its initializer is present",
+                  @"kind": @"controller",
+                  @"class": @"YTSettingsExperimentsTopViewController"},
+                @{@"title": @"Retry current experiment tab",
+                  @"subtitle": @"Re-run the currently selected native tab without forging data",
+                  @"kind": @"experimentsRetry"},
+                @{@"title": @"Experiment lifecycle and search report",
+                  @"subtitle": @"Parent responder, native tab count, search calls and result sections",
+                  @"kind": @"experimentsHealth"},
+                @{@"title": @"Study cells and opt-in report",
+                  @"subtitle": @"Observed layout, badge, opt-in controls and native callbacks",
+                  @"kind": @"studyControlsHealth"}
             ]
         },
         @{
