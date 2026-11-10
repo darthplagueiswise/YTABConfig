@@ -161,6 +161,15 @@ require_text YTABRuntimeBrowserModern.m "UINavigationItemLargeTitleDisplayModeNe
 # The old search in YouTube's navigation container vanished on scrolling.
 require_text YTABRuntimeBrowserModern.m "UITableViewStylePlain"
 require_text YTABRuntimeBrowserModern.m "viewForHeaderInSection:"
+# The visible pinned UISearchBar must be independent of UISearchController
+# and supply the actual query to the engine.
+require_text YTABRuntimeBrowser.m "- (NSString *)ytab_currentSearchText"
+require_text YTABRuntimeBrowser.m "YTABRuntimeSearchTokens([self ytab_currentSearchText])"
+require_text YTABRuntimeBrowserModern.m 'UISearchBar *search = [[UISearchBar alloc] initWithFrame:CGRectZero]'
+require_text YTABRuntimeBrowserModern.m 'return self.pinnedSearchBar.text ?: @"";'
+require_text YTABRuntimeBrowserModern.m '[self applyFilter];'
+reject_text YTABRuntimeBrowserModern.m "self.navigationItem.searchController.searchBar"
+reject_text YTABRuntimeBrowserModern.m "[search removeFromSuperview]"
 require_text YTABRuntimeBrowserModern.m "searchBar:(UISearchBar *)searchBar textDidChange:"
 require_text YTABRuntimeBrowserModern.m "self.tableView.tableHeaderView = nil;"
 require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserNativeSample"
