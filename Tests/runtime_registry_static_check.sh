@@ -215,7 +215,7 @@ require_text YTABRuntimeBrowserModern.m "UIFontTextStyleSubheadline"
 require_text YTABRuntimeBrowserModern.m "UIFontTextStyleCaption2"
 reject_text YTABRuntimeBrowserModern.m "monospacedSystemFontOfSize:15.0"
 require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserReinstallPersistedHooks();"
-require_text YTABRuntimeBrowserModern.m "already installed wrapper remains pass-through until restart"
+require_text YTABRuntimeBrowserModern.m "Scope: YouTube = main binary; Frameworks"
 reject_text YTABRuntimeBrowserModern.m "UIAlertControllerStyleActionSheet"
 
 browser_retry_count="$(grep -Fc 'YTABRuntimeBrowserReinstallPersistedHooks();' YTABRuntimeBrowserHooks.x)"
