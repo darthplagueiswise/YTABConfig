@@ -181,9 +181,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 @interface YTABRuntimeBrowserModernViewController () <UISearchBarDelegate, UIContextMenuInteractionDelegate>
 @property(nonatomic, strong) UIView *scopeHeaderView;
 @property(nonatomic, strong) UISearchBar *pinnedSearchBar;
-@property(nonatomic) BOOL usesNativeSearchToolbar;
-@property(nonatomic) BOOL priorToolbarHidden;
-@property(nonatomic) BOOL capturedPriorToolbarHidden;
+@property(nonatomic) BOOL usesNativeSearchPlacement;
 @end
 
 @implementation YTABRuntimeBrowserModernViewController
@@ -227,31 +225,28 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
         selector:@selector(ytab_nativeSampleDidChange:)
         name:YTABRuntimeNativeSampleChangedNotification object:nil];
 
-    // Use real UIKit toolbar placement. IntegratedButton keeps the search
-    // collapsed until tapped and supplies the native Liquid Glass transition.
-    // Only pre-26 builds use the separate fixed header search field.
-    self.usesNativeSearchToolbar = NO;
+    // iOS 26/27: morphing Liquid Glass search stays in the navigation bar.
+    // YouTube's custom toolbar otherwise floats the lens over runtime rows.
+    // Pre-iOS 26 uses the standalone, pinned section search bar.
+    self.usesNativeSearchPlacement = NO;
     UISearchController *nativeSearch = [self ytab_ownedSearchController];
     if (@available(iOS 26.0, *)) {
         if (nativeSearch && self.navigationController) {
-            self.usesNativeSearchToolbar = YES;
+            self.usesNativeSearchPlacement = YES;
             self.navigationItem.searchController = nativeSearch;
             self.navigationItem.hidesSearchBarWhenScrolling = NO;
             self.navigationItem.preferredSearchBarPlacement =
                 UINavigationItemSearchBarPlacementIntegratedButton;
-            self.navigationItem.searchBarPlacementAllowsToolbarIntegration = YES;
+            self.navigationItem.searchBarPlacementAllowsToolbarIntegration = NO;
             nativeSearch.searchBar.placeholder = @"Class or selector";
             nativeSearch.searchBar.autocorrectionType = UITextAutocorrectionTypeNo;
             nativeSearch.searchBar.autocapitalizationType =
                 UITextAutocapitalizationTypeNone;
-            UIBarButtonItem *searchItem =
-                self.navigationItem.searchBarPlacementBarButtonItem;
-            // Apple requires this placement item in toolbarItems, not a
-            // navigation bar button group (which throws an exception).
-            if (searchItem) self.toolbarItems = @[searchItem];
+            // Keep the system morphing search, without a bottom toolbar item.
+            self.toolbarItems = nil;
         }
     }
-    if (!self.usesNativeSearchToolbar) {
+    if (!self.usesNativeSearchPlacement) {
         self.navigationItem.searchController = nil;
         UISearchBar *search = [[UISearchBar alloc] initWithFrame:CGRectZero];
         search.delegate = self;
@@ -269,7 +264,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     } @catch (__unused NSException *exception) {}
     [scope removeFromSuperview];
 
-    CGFloat headerHeight = self.usesNativeSearchToolbar ? 46.0 : 98.0;
+    CGFloat headerHeight = self.usesNativeSearchPlacement ? 46.0 : 98.0;
     UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, headerHeight)];
     header.backgroundColor = [UIColor clearColor];
     if (self.pinnedSearchBar) [header addSubview:self.pinnedSearchBar];
@@ -279,11 +274,9 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     self.scopeHeaderView = header;
     // Do not set tableHeaderView: it would scroll the search out of sight.
     self.tableView.tableHeaderView = nil;
-    // The iOS 26/27 floating glass search button is owned by YouTube's
-    // navigation container. Reserve scrollable space beneath the last row.
-    CGFloat searchClearance = self.usesNativeSearchToolbar ? 96.0 : 22.0;
-    self.tableView.contentInset = UIEdgeInsetsMake(0, 0, searchClearance, 0);
-    self.tableView.scrollIndicatorInsets = UIEdgeInsetsMake(0, 0, searchClearance, 0);
+    // No custom floating search overlays the list; respect UIKit safe area.
+    self.tableView.contentInset = UIEdgeInsetsMake(0, 0, 18.0, 0);
+    self.tableView.scrollIndicatorInsets = UIEdgeInsetsZero;
 
     UIImage *trash = nil;
     if (@available(iOS 13.0, *)) trash = [UIImage systemImageNamed:@"trash"];
@@ -320,25 +313,8 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     [super viewWillAppear:animated];
     self.navigationItem.titleView = nil;
     self.navigationItem.hidesSearchBarWhenScrolling = NO;
-    if (self.usesNativeSearchToolbar && self.navigationController) {
-        // Preserve this across child screens and subsequent reappearances.
-        if (!self.capturedPriorToolbarHidden) {
-            self.priorToolbarHidden = self.navigationController.isToolbarHidden;
-            self.capturedPriorToolbarHidden = YES;
-        }
-        [self.navigationController setToolbarHidden:NO animated:animated];
-    }
+    // Do not change the YouTube container toolbar's visibility.
     [self.tableView reloadData];
-}
-
-- (void)viewWillDisappear:(BOOL)animated {
-    [super viewWillDisappear:animated];
-    if (self.usesNativeSearchToolbar && self.navigationController &&
-        (self.isMovingFromParentViewController || self.isBeingDismissed)) {
-        [self.navigationController setToolbarHidden:self.priorToolbarHidden
-                                          animated:animated];
-        self.capturedPriorToolbarHidden = NO;
-    }
 }
 
 - (void)viewDidLayoutSubviews {
@@ -346,7 +322,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     UIView *header = self.scopeHeaderView;
     if (!header) return;
     CGFloat width = CGRectGetWidth(self.tableView.bounds);
-    CGFloat searchHeight = self.usesNativeSearchToolbar ? 0.0 : 52.0;
+    CGFloat searchHeight = self.usesNativeSearchPlacement ? 0.0 : 52.0;
     header.frame = CGRectMake(0, 0, width, searchHeight + 46.0);
     if (self.pinnedSearchBar)
         self.pinnedSearchBar.frame = CGRectMake(8, 0, MAX(0, width - 16), 52);
@@ -359,7 +335,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 }
 
 - (NSString *)ytab_currentSearchText {
-    return self.usesNativeSearchToolbar
+    return self.usesNativeSearchPlacement
         ? ([self ytab_ownedSearchController].searchBar.text ?: @"")
         : (self.pinnedSearchBar.text ?: @"");
 }
@@ -384,7 +360,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
     (void)tableView; (void)section;
-    return self.usesNativeSearchToolbar ? 46.0 : 98.0;
+    return self.usesNativeSearchPlacement ? 46.0 : 98.0;
 }
 
 - (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
@@ -400,8 +376,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     (void)section;
-    // Native bottom-toolbar search can overlap long section footers.
-    // Descriptions remain available through the row detail view.
+    // Explanations belong in detail views, not tall table footers.
     return nil;
 }
 
