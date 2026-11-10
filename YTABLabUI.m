@@ -505,7 +505,12 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
         _searchController.obscuresBackgroundDuringPresentation = NO;
         _searchController.searchBar.placeholder = @"Readable title or raw selector";
         self.navigationItem.searchController = _searchController;
-        self.navigationItem.hidesSearchBarWhenScrolling = !beginSearch;
+        // Persistent top search (iOS 26/27); never collapse the bar on scroll.
+        self.navigationItem.hidesSearchBarWhenScrolling = NO;
+        if (@available(iOS 16.0, *)) {
+            self.navigationItem.preferredSearchBarPlacement =
+                UINavigationItemSearchBarPlacementStacked;
+        }
         self.definesPresentationContext = YES;
         if (beginSearch) {
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -598,12 +603,19 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
     YTABLabFlag *flag = YTABRefreshedFlag(self.provider, self.visibleFlags[indexPath.row]);
     cell.textLabel.text = flag.readableTitle;
     cell.textLabel.numberOfLines = 2;
+    cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+    cell.textLabel.adjustsFontForContentSizeCategory = YES;
+    cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
+    cell.detailTextLabel.adjustsFontForContentSizeCategory = YES;
     NSString *native = flag.hasNativeValue ? [NSString stringWithFormat:@"Native %@", YTABBooleanText(flag.nativeValue)] : @"Native unavailable";
     NSString *effective = flag.hasEffectiveValue
         ? [NSString stringWithFormat:@"Effective %@", YTABBooleanText(flag.effectiveValue)]
         : @"Effective unavailable";
-    cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ • %@ / %@\n%@ · %@",
-        flag.status, flag.category, flag.risk, native, effective];
+    NSString *overrideState = flag.hasOverride
+        ? (flag.effectiveValue ? @"Override ON" : @"Override OFF")
+        : @"System";
+    cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ • %@ / %@\n%@ · %@ · %@",
+        flag.status, flag.category, flag.risk, native, effective, overrideState];
     cell.detailTextLabel.numberOfLines = 2;
     cell.selectionStyle = UITableViewCellSelectionStyleDefault;
 
@@ -623,7 +635,7 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
     [accessory addSubview:reset];
     UISwitch *toggle = [[UISwitch alloc] initWithFrame:CGRectMake(64, 0, 58, 32)];
     toggle.on = flag.effectiveValue;
-    toggle.enabled = !flag.removed;
+    toggle.enabled = !flag.removed && flag.hasEffectiveValue;
     toggle.accessibilityLabel = [NSString stringWithFormat:@"Override %@", flag.readableTitle];
     toggle.accessibilityValue = flag.hasEffectiveValue ? YTABBooleanText(flag.effectiveValue) : @"Unavailable";
     toggle.accessibilityHint = [NSString stringWithFormat:@"Changes %@.%@", flag.sourceClass, flag.rawSelector];
