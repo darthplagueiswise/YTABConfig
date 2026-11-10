@@ -20,16 +20,40 @@ static NSString *lastSearchResponseClass, *lastSearchErrorDomain;
 static NSInteger lastSearchErrorCode, lastSearchHTTPStatus;
 static NSUInteger settings30Calls, settings37Calls;
 static BOOL settings30SawEntry, settings37SawEntry;
+static NSString *settings30EntryClass, *settings37EntryClass;
+static id settings30HasNavEndpoint, settings37HasNavEndpoint;
+static id settings30HasURLEndpoint, settings37HasURLEndpoint;
+
+// A generated Objective-C presence getter has no receiver side effects, but
+// only read it if its exact ABI is available. Nil result means "not observed".
+static id YTABReadEndpointPresence(id entry, NSString *selectorName) {
+    if (!entry) return [NSNull null];
+    SEL selector = NSSelectorFromString(selectorName);
+    Method method = class_getInstanceMethod(object_getClass(entry), selector);
+    if (!method || strcmp(method_getTypeEncoding(method) ?: "", "B16@0:8")) 
+        return [NSNull null];
+    @try { return @(((BOOL (*)(id, SEL))objc_msgSend)(entry, selector)); }
+    @catch (__unused NSException *exception) { return [NSNull null]; }
+}
 
 void YTABCRecordSettingsCategoryUpdate(NSUInteger category, id entry) {
     if (category != 30 && category != 37) return;
+    NSString *clsName = entry ? NSStringFromClass([entry class]) : @"nil";
+    id hasNavigation = YTABReadEndpointPresence(entry, @"hasNavigationEndpoint");
+    id hasURL = YTABReadEndpointPresence(entry, @"hasURLEndpoint");
     @synchronized([NSProcessInfo processInfo]) {
         if (category == 30) {
             settings30Calls++;
             if (entry) settings30SawEntry = YES;
+            settings30EntryClass = clsName;
+            settings30HasNavEndpoint = hasNavigation;
+            settings30HasURLEndpoint = hasURL;
         } else {
             settings37Calls++;
             if (entry) settings37SawEntry = YES;
+            settings37EntryClass = clsName;
+            settings37HasNavEndpoint = hasNavigation;
+            settings37HasURLEndpoint = hasURL;
         }
     }
 }
@@ -250,6 +274,12 @@ NSDictionary<NSString *, id> *YTABCCopyNativeDiagnostics(void) {
             @"category37UpdateCalls": @(settings37Calls),
             @"category30HadEntry": @(settings30SawEntry),
             @"category37HadEntry": @(settings37SawEntry),
+            @"category30EntryClass": settings30EntryClass ?: @"not observed",
+            @"category37EntryClass": settings37EntryClass ?: @"not observed",
+            @"category30HasNavigationEndpoint": settings30HasNavEndpoint ?: [NSNull null],
+            @"category37HasNavigationEndpoint": settings37HasNavEndpoint ?: [NSNull null],
+            @"category30HasURLEndpoint": settings30HasURLEndpoint ?: [NSNull null],
+            @"category37HasURLEndpoint": settings37HasURLEndpoint ?: [NSNull null],
             @"nativeOptInCalls": @(optInCalls),
             @"nativeOptOutCalls": @(optOutCalls),
             @"nativeGooglerCheckObserved": @(sawGooglerCheck),
