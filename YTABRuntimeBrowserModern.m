@@ -286,6 +286,11 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     self.scopeHeaderLabel = sourceLabel;
     // Do not set tableHeaderView: it would scroll the search out of sight.
     self.tableView.tableHeaderView = nil;
+    // The iOS 26/27 floating glass search button is owned by YouTube's
+    // navigation container. Reserve scrollable space beneath the last row.
+    CGFloat searchClearance = self.usesNativeSearchToolbar ? 96.0 : 22.0;
+    self.tableView.contentInset = UIEdgeInsetsMake(0, 0, searchClearance, 0);
+    self.tableView.scrollIndicatorInsets = UIEdgeInsetsMake(0, 0, searchClearance, 0);
 
     UIImage *trash = nil;
     if (@available(iOS 13.0, *)) trash = [UIImage systemImageNamed:@"trash"];
@@ -423,8 +428,11 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     NSString *key = YTABModernStringValue(method, @"patchKey");
     BOOL isClassMethod = YTABModernBoolValue(method, @"classMethod");
 
-    cell.selectorLabel.text = [NSString stringWithFormat:@"%@ %@",
-                               isClassMethod ? @"+" : @"-", selectorName];
+    // Never leave a lone '-' at the beginning of a wrapped selector. The
+    // owning class and method kind are already available in the subtitle.
+    cell.selectorLabel.text = isClassMethod
+        ? [NSString stringWithFormat:@"+ %@", selectorName]
+        : selectorName;
     BOOL configFlag = YTABModernBoolValue(method, @"configFlag");
     cell.ownerLabel.text = configFlag
         ? [NSString stringWithFormat:@"%@ · captured at launch", className]
@@ -450,12 +458,12 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
         ? UIColor.systemBlueColor : UIColor.systemGreenColor;
     cell.statusLabel.textColor = hasOverride
         ? UIColor.systemBlueColor : UIColor.secondaryLabelColor;
-    cell.statusLabel.text = nativeKnown
-        ? [NSString stringWithFormat:@"Native %@ · Effective %@%@",
-            nativeText, effectiveText,
-            hasOverride && !installed ? @" · Pending" : @""]
-        : [NSString stringWithFormat:@"Native not observed · Effective %@",
-            effectiveText];
+    cell.statusLabel.text = hasOverride
+        ? [NSString stringWithFormat:@"Override %@ · Native %@%@",
+            effectiveText, nativeText, !installed ? @" · Pending" : @""]
+        : (nativeKnown
+            ? [NSString stringWithFormat:@"System %@ · No override", nativeText]
+            : @"Not observed · No override");
 
     [cell.overrideSwitch removeTarget:nil action:NULL forControlEvents:UIControlEventValueChanged];
     [cell.overrideSwitch setOn:effectiveKnown && effectiveOn animated:NO];
