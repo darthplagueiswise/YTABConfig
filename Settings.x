@@ -565,6 +565,10 @@ BOOL YTABResetAllRuntimeOverrides(
 }
 
 - (void)updateSectionForCategory:(NSUInteger)category withEntry:(id)entry {
+    // Observe whether YouTube actually asks to construct categories 30/37.
+    // Do not generate entries for missing or account-gated sections.
+    extern void YTABCRecordSettingsCategoryUpdate(NSUInteger, id);
+    YTABCRecordSettingsCategoryUpdate(category, entry);
     if (category == YTABCSection) {
         [self updateYTABCSectionWithEntry:entry];
         return;
