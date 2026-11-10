@@ -11,6 +11,7 @@ extern BOOL YTABRuntimeBrowserPatchInstalled(NSString *patchKey);
 // search field is hosted.
 @interface YTABRuntimeBrowserViewController (YTABModernFiltering)
 - (void)applyFilter;
+- (NSString *)ytab_currentSearchText;
 @end
 
 static NSString * const YTABModernOverridesKey = @"YTABCRuntimeBrowserOverrides";
@@ -204,9 +205,12 @@ static UITableViewCell *YTABModernEngineCell(id controller,
     // Always-visible native search. YouTube's navigation wrapper can collapse
     // the UINavigationItem-integrated search field, so retain the native
     // UISearchBar but present it in a pinned *plain table section header*.
-    UISearchBar *search = self.navigationItem.searchController.searchBar;
+    // Do NOT detach a UISearchController-owned searchBar. UIKit can reclaim
+    // or hide it while a custom navigation controller changes presentation.
+    // Keep the engine's search controller retained for legacy compatibility,
+    // but give this pinned header its own native UISearchBar and filter source.
     self.navigationItem.searchController = nil;
-    [search removeFromSuperview];
+    UISearchBar *search = [[UISearchBar alloc] initWithFrame:CGRectZero];
     search.delegate = self;
     search.placeholder = @"Class or selector";
     search.searchBarStyle = UISearchBarStyleMinimal;
@@ -273,9 +277,25 @@ static UITableViewCell *YTABModernEngineCell(id controller,
     scope.frame = CGRectMake(16, 66, MAX(0, width - 32), 31);
 }
 
+- (NSString *)ytab_currentSearchText {
+    return self.pinnedSearchBar.text ?: @"";
+}
+
 - (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText {
-    (void)searchBar; (void)searchText;
-    // The parent runtime engine owns filtering, and uses this exact searchBar.
+    if (searchBar != self.pinnedSearchBar) return;
+    (void)searchText;
+    // Parent engine filters using ytab_currentSearchText, overridden above.
+    // There is no reliance on UISearchController activation or presentation.
+    [self applyFilter];
+}
+
+- (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar {
+    [searchBar resignFirstResponder];
+}
+
+- (void)searchBarCancelButtonClicked:(UISearchBar *)searchBar {
+    searchBar.text = @"";
+    [searchBar resignFirstResponder];
     [self applyFilter];
 }
 
@@ -329,12 +349,6 @@ static UITableViewCell *YTABModernEngineCell(id controller,
         : className;
 
     NSString *engineStatus = engineCell.detailTextLabel.text ?: @"";
-    NSString *classPrefix = className.length
-        ? [className stringByAppendingString:@" · "]
-        : @"";
-    if (classPrefix.length && [engineStatus hasPrefix:classPrefix]) {
-        engineStatus = [engineStatus substringFromIndex:classPrefix.length];
-    }
     NSNumber *nativeSample = YTABRuntimeBrowserNativeSample(patchKey);
     NSNumber *savedOverride = YTABModernStoredOverrides()[patchKey];
     BOOL installed = YTABRuntimeBrowserPatchInstalled(patchKey);
