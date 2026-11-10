@@ -15,7 +15,23 @@ reject_text() {
 }
 
 # Existing native studies push+modal entry points remain callable and compiled.
-require_text Makefile "YTNativeExperiments.x YTABCNativeMenus.m YTABNativeDiagnostics.m"
+require_text Makefile "YTNativeExperiments.x YTABCNativeMenus.m YTABCSettingsRowsInspector.m YTABNativeDiagnostics.m"
+require_text Settings.x "YTABCPushNativeMenuHubForCategory(settingsViewController, route)"
+require_text Settings.x "YTABC_NATIVE_QUICK_"
+require_text Settings.x '@"Native Experiments — search & studies"'
+require_text Settings.x '@"Debug & QA tools"'
+require_text Settings.x '@"Native Configs / Phenotype"'
+require_text Settings.x '@"Hidden Settings rows"'
+require_text YTABCNativeMenus.h "YTABCPushNativeMenuHubForCategory"
+require_text YTABCNativeMenus.m "YTABCCreateSettingsRowsInspector(owner)"
+require_text YTABCNativeMenus.m '@"configFlags"'
+require_text YTABCSettingsRowsInspector.m '"settingsSectionControllers"'
+require_text YTABCSettingsRowsInspector.m '@selector(settingsCategoryOrder)'
+require_text YTABCSettingsRowsInspector.m '"isHeaderHidden"'
+require_text YTABCSettingsRowsInspector.m '"isDisabled"'
+require_text YTABCSettingsRowsInspector.m '"items"'
+require_text YTABCSettingsRowsInspector.m "server rows are not"
+
 require_text Settings.x "YTABCPushNativeExperiments(settingsViewController)"
 require_text Settings.x "YTABCPresentNativeExperiments(settingsViewController)"
 require_text Settings.x "YTABCPushNativeMenuHub(settingsViewController)"
