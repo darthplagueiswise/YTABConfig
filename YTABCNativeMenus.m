@@ -89,14 +89,15 @@ static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
                   @"subtitle": @"YTSettingsExperimentsTopViewController, via the existing native opener",
                   @"kind": @"studies",
                   @"class": @"YTSettingsExperimentsTopViewController"},
-                @{@"title": @"Experiments: search / tabs",
-                  @"subtitle": @"YTSettingsExperimentsViewController with live parentResponder",
+                // Verified from the 21.43.5 ARM64 disassembly:
+                // -[YTSettingsExperimentsViewController initWithParentResponder:]
+                // constructs YTSettingsExperimentsResultsViewController itself
+                // (classref 0x10cbdada8, instruction VA 0x101434748).
+                // Results/Study cells are child views, not standalone menu roots.
+                @{@"title": @"Native experiments: search, tabs and results",
+                  @"subtitle": @"Open the original experiments root. It constructs its own results controllers, study sections and opt-in cells.",
                   @"kind": @"controller",
                   @"class": @"YTSettingsExperimentsViewController"},
-                @{@"title": @"Experiments: results",
-                  @"subtitle": @"YTSettingsExperimentsResultsViewController; may need prior search context",
-                  @"kind": @"controller",
-                  @"class": @"YTSettingsExperimentsResultsViewController"},
                 @{@"title": @"Studies (modal)",
                   @"subtitle": @"Native controller in a dismissible navigation sheet",
                   @"kind": @"studiesModal",
