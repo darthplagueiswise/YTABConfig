@@ -21,6 +21,10 @@ require_text Settings.x "YTABCPresentNativeExperiments(settingsViewController)"
 require_text Settings.x "YTABCPushNativeMenuHub(settingsViewController)"
 require_text Settings.x '@"YTABC_NATIVE_TOOLS_OPEN"'
 require_text YTNativeExperiments.x 'initWithParentResponder:'
+require_text YTNativeExperiments.x 'id parentResponder = settingsViewController;'
+require_text YTNativeExperiments.x 'strcmp(method_getTypeEncoding(nativeInit), "@24@0:8@16")'
+reject_text YTNativeExperiments.x 'parentResponder = [settingsViewController parentResponder];'
+require_text YTABCNativeMenus.m 'id responder = owner;'
 require_text YTABCNativeMenus.m 'YTSettingsExperimentsViewController'
 require_text YTABCNativeMenus.m 'YTSettingsExperimentsResultsViewController'
 require_text Makefile 'YTABNativeExperimentsHealth.m'
