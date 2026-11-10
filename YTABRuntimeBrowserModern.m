@@ -7,6 +7,12 @@ extern BOOL YTABRuntimeBrowserApplyMode(NSString *patchKey, NSInteger mode);
 extern NSNumber *YTABRuntimeBrowserNativeSample(NSString *patchKey);
 extern BOOL YTABRuntimeBrowserPatchInstalled(NSString *patchKey);
 
+// The runtime engine implements the filter; the UI only chooses where its
+// search field is hosted.
+@interface YTABRuntimeBrowserViewController (YTABModernFiltering)
+- (void)applyFilter;
+@end
+
 static NSString * const YTABModernOverridesKey = @"YTABCRuntimeBrowserOverrides";
 static const void *YTABModernPatchKeyAssociation = &YTABModernPatchKeyAssociation;
 
@@ -198,7 +204,7 @@ static UITableViewCell *YTABModernEngineCell(id controller,
     // Always-visible native search. YouTube's navigation wrapper can collapse
     // the UINavigationItem-integrated search field, so retain the native
     // UISearchBar but present it in a pinned *plain table section header*.
-    UISearchBar *search = self.searchController.searchBar;
+    UISearchBar *search = self.navigationItem.searchController.searchBar;
     self.navigationItem.searchController = nil;
     [search removeFromSuperview];
     search.delegate = self;
