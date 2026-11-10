@@ -82,7 +82,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     _selectorLabel.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleSubheadline]
         scaledFontForFont:[UIFont systemFontOfSize:13.0 weight:UIFontWeightMedium]];
     _selectorLabel.adjustsFontForContentSizeCategory = YES;
-    _selectorLabel.numberOfLines = 2;
+    _selectorLabel.numberOfLines = 3;
     _selectorLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
     [_selectorLabel setContentCompressionResistancePriority:UILayoutPriorityDefaultLow
                                                    forAxis:UILayoutConstraintAxisHorizontal];
@@ -172,7 +172,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
         [stack.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
         [stack.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:6],
         [stack.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-6],
-        [_modeButton.heightAnchor constraintGreaterThanOrEqualToConstant:26],
+        [_modeButton.heightAnchor constraintGreaterThanOrEqualToConstant:24],
     ]];
     return self;
 }
@@ -464,6 +464,9 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     cell.overrideSwitch.accessibilityValue = [NSString stringWithFormat:
         @"Effective %@, %@. Last native %@",
         effectiveText, hasOverride ? @"override" : @"system", nativeText];
+    cell.overrideSwitch.accessibilityHint = nativeKnown
+        ? @"Changing this switch creates a local explicit override. Long press to restore the system state."
+        : @"This getter has not run in YouTube; long press to choose a local override without assuming its native state.";
     cell.unknownLabel.accessibilityHint =
         @"The native Objective-C getter has not executed. This is not OFF or evidence of eligibility.";
     objc_setAssociatedObject(cell.overrideSwitch, YTABModernPatchKeyAssociation,
@@ -481,8 +484,12 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
                 [[UIContextMenuInteraction alloc] initWithDelegate:self]];
     }
 
-    NSString *modeLabel = mode == YTABModernPatchModeSystem ? @"System"
-        : (mode == YTABModernPatchModeForceOn ? @"Force ON" : @"Force OFF");
+    // Avoid a repeated "System" glass pill on every original/native row.
+    // Keep actions immediately available for overrides and unsampled getters.
+    // Every row also has a native long-press tri-state context menu.
+    cell.modeButton.hidden = (mode == YTABModernPatchModeSystem && nativeKnown);
+    NSString *modeLabel = mode == YTABModernPatchModeSystem ? @"Set…"
+        : (mode == YTABModernPatchModeForceOn ? @"Override ON" : @"Override OFF");
     UIButtonConfiguration *configuration = cell.modeButton.configuration;
     if (configuration) {
         configuration.title = modeLabel;
@@ -504,7 +511,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     cell.modeButton.accessibilityValue = modeLabel;
     cell.accessibilityLabel = [NSString stringWithFormat:@"%@, %@, native %@",
                                selectorName, modeLabel, nativeText];
-    cell.accessibilityHint = @"Tap for details. Long press for System, Force ON, Force OFF and passive observation.";
+    cell.accessibilityHint = @"Tap for details. Long press to set or restore the local override; System uses the original native value.";
     return cell;
 }
 
