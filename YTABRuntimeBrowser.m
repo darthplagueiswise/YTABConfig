@@ -206,13 +206,33 @@ static NSNumber *YTABRuntimeOverrideForKey(NSString *key) {
 
 static BOOL YTABRuntimeSetOverride(NSNumber *value, NSString *key) {
     if (!key.length) return NO;
+    // Install BEFORE writing preferences, otherwise the UI can claim "ON"
+    // while the ABI is unsupported or the target class is not loaded.
+    if (value && !YTABRuntimeInstallPatchKey(key)) return NO;
     NSMutableDictionary *overrides = [YTABRuntimeStoredOverrides() mutableCopy];
     if (value) overrides[key] = @(value.boolValue);
     else [overrides removeObjectForKey:key];
     [[NSUserDefaults standardUserDefaults] setObject:overrides.copy
                                               forKey:YTABRuntimeBrowserOverridesKey];
     YTABRuntimeRefreshOverrideCache();
-    return value ? YTABRuntimeInstallPatchKey(key) : YES;
+    return YES;
+}
+
+// Read-only state bridges used by the native UIKit presentation.
+BOOL YTABRuntimeBrowserApplyMode(NSString *patchKey, NSInteger mode) {
+    if (mode < 0 || mode > 2) return NO;
+    NSNumber *value = mode == 0 ? nil : @(mode == 2);
+    return YTABRuntimeSetOverride(value, patchKey);
+}
+
+NSNumber *YTABRuntimeBrowserNativeSample(NSString *patchKey) {
+    return YTABRuntimeObservedNative(patchKey);
+}
+
+BOOL YTABRuntimeBrowserPatchInstalled(NSString *patchKey) {
+    @synchronized([YTABRuntimeMethod class]) {
+        return patchKey.length && [sYTABRuntimeInstalledKeys containsObject:patchKey];
+    }
 }
 
 static void YTABRuntimeClearOverrides(void) {
