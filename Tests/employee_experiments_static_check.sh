@@ -15,7 +15,7 @@ reject_text() {
 }
 
 # Existing native studies push+modal entry points remain callable and compiled.
-require_text Makefile "YTNativeExperiments.x YTABCNativeMenus.m"
+require_text Makefile "YTNativeExperiments.x YTABCNativeMenus.m YTABNativeDiagnostics.m"
 require_text Settings.x "YTABCPushNativeExperiments(settingsViewController)"
 require_text Settings.x "YTABCPresentNativeExperiments(settingsViewController)"
 require_text Settings.x "YTABCPushNativeMenuHub(settingsViewController)"
@@ -29,19 +29,35 @@ require_text YTABCNativeMenus.m 'YTABCInstallNativeMenuObservationHooks'
 require_text YTABCNativeMenus.m 'method_getNumberOfArguments'
 require_text YTABCNativeMenus.m 'sYTABCObservedPlaybackOverlay = self;'
 require_text Tweak.x 'YTABCInstallNativeMenuObservationHooks();'
+require_text Tweak.x 'YTABCInstallNativeDiagnostics();'
+require_text YTABNativeDiagnostics.m 'objc_lookUpClass("PHTHeterodyneSyncer")'
+require_text YTABNativeDiagnostics.m 'objc_lookUpClass("PHTFlatFilePhenotype")'
+require_text YTABNativeDiagnostics.m 'objc_lookUpClass("YTExperimentsServiceImpl")'
+require_text YTABNativeDiagnostics.m 'MSHookMessageEx(cls,selector,replacement,original);'
+require_text YTABNativeDiagnostics.m 'method_getTypeEncoding(method)'
+require_text YTABNativeDiagnostics.m 'v40@0:8@16@24@?32'
+require_text YTABNativeDiagnostics.m 'v40@0:8@16@?24@?32'
+require_text YTABNativeDiagnostics.m 'v24@0:8@?16'
+require_text Settings.x 'YTABCTracePhenotype'
+require_text Settings.x 'YTABCTraceExperimentsSearch'
+require_text Settings.x 'YTABCTraceExperimentsOptIn'
+require_text Settings.x 'YTABCTraceExperimentsOptOut'
+require_text Settings.x 'YTABCRunPhenotypeResync();'
+require_text Settings.x 'YTABCClearNativeExperimentsCaches();'
+require_text Settings.x 'YTABCCopyNativeDiagnostics()'
 
 # No unimplemented hooks, missing linker symbols or false toggles are shipped.
 for symbol in \
   YTABCInstallEmployeeExperimentHooks \
-  YTABCRunPhenotypeResync \
-  YTABCClearNativeExperimentsCaches; do
+  YTABCForceIsGooglerAccount \
+  YTABCBypassIdentitySearch; do
   reject_text Tweak.x "$symbol"
   reject_text Settings.x "$symbol"
 done
 reject_text Makefile 'YTInternalIdentity.x'
 reject_text Settings.x '@"YTABCForceIsGooglerAccount"'
 reject_text Settings.x '@"YTABCBypassIdentitySearch"'
-reject_text Settings.x '@"YTABCTracePhenotype"'
+require_text Settings.x '@"YTABCTracePhenotype"'
 
 # The native-menu observer must never depend on an inline Mach-O text patch.
 reject_text YTABCNativeMenus.m "MSHookFunction"
