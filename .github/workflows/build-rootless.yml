@@ -3,6 +3,15 @@ name: Build YTABConfig (rootless, dylib, and Feather)
 on:
   workflow_dispatch:
     inputs:
+      runner_label:
+        description: macOS runner pool (switch if one hosted pool stalls)
+        default: macos-15-intel
+        required: false
+        type: choice
+        options:
+          - macos-15-intel
+          - macos-15
+          - macos-26-intel
       build_rootless:
         description: Build rootless deb
         default: true
@@ -37,7 +46,9 @@ concurrency:
 jobs:
   build:
     name: Build YTABConfig
-    runs-on: macos-latest
+    # Standard GitHub-hosted Intel pool (14 GB RAM), not the congested
+    # macos-latest ARM pool. Manual dispatch can select another pool.
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.runner_label || 'macos-15-intel' }}
     permissions:
       contents: read
 
