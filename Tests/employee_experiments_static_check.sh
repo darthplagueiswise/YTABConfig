@@ -31,12 +31,23 @@ require_text YTABCSettingsRowsInspector.m '"isHeaderHidden"'
 require_text YTABCSettingsRowsInspector.m '"isDisabled"'
 require_text YTABCSettingsRowsInspector.m '"items"'
 require_text YTABCSettingsRowsInspector.m "Rows suppressed by server logic are not synthesized or unlocked."
+# Native loaded-section visibility is reversible; no server-supplied rows or
+# isDisabled/eligibility setters are synthesized by the inspector.
+require_text YTABCSettingsRowsInspector.m 'ytabc_setHeaderHidden:'
+require_text YTABCSettingsRowsInspector.m 'ytabc_revealButtonTapped:'
+require_text YTABCSettingsRowsInspector.m 'setSectionItems:forCategory:title:icon:titleDescription:headerHidden:'
+require_text YTABCSettingsRowsInspector.m 'existing, number.unsignedIntegerValue'
+require_text YTABCSettingsRowsInspector.m 'self.originalHidden[category]'
+require_text YTABCSettingsRowsInspector.m 'if (![items isKindOfClass:NSArray.class]'
+reject_text YTABCSettingsRowsInspector.m 'setDisabled:'
+require_text YTABCNativeMenus.m 'Reveal loaded Settings sections'
 
 require_text Settings.x "YTABCPushNativeExperiments(settingsViewController)"
 require_text Settings.x "YTABCPresentNativeExperiments(settingsViewController)"
 require_text Settings.x "YTABCPushNativeMenuHub(settingsViewController)"
 require_text Settings.x '@"YTABC_NATIVE_TOOLS_OPEN"'
 require_text YTNativeExperiments.x 'initWithParentResponder:'
+require_text YTNativeExperiments.x 'Class experimentsClass = NSClassFromString(@"YTSettingsExperimentsViewController");'
 require_text YTNativeExperiments.x 'id parentResponder = settingsViewController;'
 require_text YTNativeExperiments.x 'strcmp(method_getTypeEncoding(nativeInit), "@24@0:8@16")'
 reject_text YTNativeExperiments.x 'parentResponder = [settingsViewController parentResponder];'
