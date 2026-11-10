@@ -12,6 +12,7 @@ NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *
 
 extern void SearchHook(void);
 extern void YTABCInstallNativeDiagnostics(void);
+extern void YTABCInstallNativeExperimentsHealthHooks(void);
 extern BOOL tweakEnabled(void);
 extern BOOL groupedSettings(void);
 extern void updateAllKeys(void);
@@ -89,6 +90,7 @@ static void hookClass(NSObject *instance) {
     // Observe native UI components without modifying account eligibility.
     YTABCInstallNativeMenuObservationHooks();
     YTABCInstallNativeDiagnostics();
+    YTABCInstallNativeExperimentsHealthHooks();
 
     if (tweakEnabled()) {
         updateAllKeys();
@@ -134,6 +136,7 @@ static void hookClass(NSObject *instance) {
     // Attempt registration here and again during the app delegate launch.
     YTABCInstallNativeMenuObservationHooks();
     YTABCInstallNativeDiagnostics();
+    YTABCInstallNativeExperimentsHealthHooks();
 
     cache = [NSMutableDictionary new];
     excludedPrefixes = [NSSet setWithArray:@[
