@@ -35,6 +35,16 @@ static BOOL YTABCSafeBoolean(id object, const char *name, BOOL *known) {
     } @catch (__unused NSException *exception) { return NO; }
 }
 
+static const void *YTABCRevealCategoryAssociation = &YTABCRevealCategoryAssociation;
+
+static void YTABCShowInspectorNotice(UIViewController *owner, NSString *message) {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Native Settings"
+        message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK"
+        style:UIAlertActionStyleDefault handler:nil]];
+    [owner presentViewController:alert animated:YES completion:nil];
+}
+
 static NSString *YTABCReadTitle(id obj) {
     id value = YTABCSafeObject(obj, "title");
     return [value isKindOfClass:NSString.class] && [value length]
@@ -44,6 +54,10 @@ static NSString *YTABCReadTitle(id obj) {
 @interface YTABCSettingsRowsInspector : UITableViewController
 @property(nonatomic, strong) NSArray<NSDictionary<NSString *, id> *> *rows;
 @property(nonatomic, strong) NSArray<NSDictionary<NSString *, id> *> *details;
+@property(nonatomic, weak) id settingsOwner;
+@property(nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *originalHidden;
+- (void)refreshLiveCategories;
+- (void)ytabc_revealButtonTapped:(UIButton *)sender;
 - (instancetype)initWithSettingsOwner:(id)owner;
 - (instancetype)initWithCategory:(NSDictionary<NSString *, id> *)category;
 @end
@@ -57,9 +71,24 @@ static NSString *YTABCReadTitle(id obj) {
     self.tableView.rowHeight = UITableViewAutomaticDimension;
     self.tableView.estimatedRowHeight = 54;
 
-    // Enumerate only actual section controllers and the app's own declared
-    // Settings category order. A declared but not loaded section is NOT
-    // presented as a hidden item or a loadable menu.
+    _settingsOwner = owner;
+    _originalHidden = [NSMutableDictionary dictionary];
+    [self refreshLiveCategories];
+    return self;
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    if (!self.details) {
+        [self refreshLiveCategories];
+        [self.tableView reloadData];
+    }
+}
+
+// Enumerate only actually loaded categories; never fabricate rows missing
+// from the server model. A header is a presentation property, not eligibility.
+- (void)refreshLiveCategories {
+    id owner = self.settingsOwner;
     NSMutableDictionary<NSNumber *, id> *live = [NSMutableDictionary dictionary];
     id controllers = YTABCSafeObject(owner, "settingsSectionControllers");
     if ([controllers isKindOfClass:NSDictionary.class]) {
@@ -91,23 +120,100 @@ static NSString *YTABCReadTitle(id obj) {
         BOOL hiddenKnown = NO, disabledKnown = NO;
         BOOL hidden = YTABCSafeBoolean(section, "isHeaderHidden", &hiddenKnown);
         BOOL disabled = YTABCSafeBoolean(section, "isDisabled", &disabledKnown);
+        NSUInteger count = [items isKindOfClass:NSArray.class] ? [(NSArray *)items count] : 0;
         NSString *name = section ? YTABCReadTitle(section)
                                  : [NSString stringWithFormat:@"Category %@", number];
+        BOOL changedHere = self.originalHidden[number] != nil;
         NSString *subtitle = section
-            ? [NSString stringWithFormat:@"ID %@ · %lu rows · header %@ · %@",
-                number, (unsigned long)([items isKindOfClass:NSArray.class]
-                                    ? [items count] : 0),
+            ? [NSString stringWithFormat:@"ID %@ · %lu loaded items · header %@%@ · %@",
+                number, (unsigned long)count,
                 hiddenKnown ? (hidden ? @"hidden" : @"visible") : @"unknown",
+                changedHere ? @" (local)" : @"",
                 disabledKnown ? (disabled ? @"disabled" : @"enabled") : @"unknown"]
             : @"Declared in native order; not loaded by current Settings model";
-        [rows addObject:@{@"title": name ?: @"Settings",
-                          @"subtitle": subtitle,
-                          @"category": number,
-                          @"section": section ?: NSNull.null,
-                          @"loaded": @(section != nil)}];
+        [rows addObject:@{@"title": name ?: @"Settings", @"subtitle": subtitle,
+            @"category": number, @"section": section ?: NSNull.null,
+            @"loaded": @(section != nil), @"hidden": @(hidden),
+            @"hiddenKnown": @(hiddenKnown), @"disabled": @(disabled),
+            @"itemCount": @(count), @"localOverride": @(changedHere),
+            @"owner": owner ?: NSNull.null}];
     }
-    _rows = rows.copy;
-    return self;
+    self.rows = rows.copy;
+}
+
+// Re-publish the exact already loaded section items through YouTube's existing
+// Settings presentation entry point, changing ONLY headerHidden. This does not
+// synthesize server items, enable isDisabled, or change account eligibility.
+- (BOOL)ytabc_setHeaderHidden:(BOOL)hidden category:(NSDictionary *)entry {
+    if (![NSThread isMainThread]) return NO;
+    id owner = self.settingsOwner;
+    id section = entry[@"section"];
+    if (!owner || section == NSNull.null) return NO;
+    id items = YTABCSafeObject(section, "items");
+    if (![items isKindOfClass:NSArray.class] || ![(NSArray *)items count]) return NO;
+    NSNumber *number = entry[@"category"];
+    if (![number isKindOfClass:NSNumber.class]) return NO;
+    NSString *title = YTABCReadTitle(section);
+    id icon = YTABCSafeObject(section, "icon");
+    id desc = YTABCSafeObject(section, "titleDescription");
+    NSMutableArray *existing = [(NSArray *)items mutableCopy];
+
+    SEL withIcon = NSSelectorFromString(
+        @"setSectionItems:forCategory:title:icon:titleDescription:headerHidden:");
+    SEL withoutIcon = NSSelectorFromString(
+        @"setSectionItems:forCategory:title:titleDescription:headerHidden:");
+    Method method = class_getInstanceMethod(object_getClass(owner), withIcon);
+    SEL selector = withIcon;
+    NSUInteger expectedArgs = 8;
+    if (!method || method_getNumberOfArguments(method) != expectedArgs) {
+        selector = withoutIcon;
+        method = class_getInstanceMethod(object_getClass(owner), withoutIcon);
+        expectedArgs = 7;
+    }
+    if (!method || method_getNumberOfArguments(method) != expectedArgs) return NO;
+    char returnType[16] = {0}, lastArg[16] = {0};
+    method_getReturnType(method, returnType, sizeof(returnType));
+    method_getArgumentType(method, (unsigned int)(expectedArgs - 1), lastArg, sizeof(lastArg));
+    if (returnType[0] != 'v' || !(lastArg[0] == 'B' || lastArg[0] == 'c')) return NO;
+    @try {
+        if (expectedArgs == 8)
+            ((void (*)(id, SEL, id, NSUInteger, id, id, id, BOOL))objc_msgSend)(
+                owner, selector, existing, number.unsignedIntegerValue,
+                title, icon, desc, hidden);
+        else
+            ((void (*)(id, SEL, id, NSUInteger, id, id, BOOL))objc_msgSend)(
+                owner, selector, existing, number.unsignedIntegerValue,
+                title, desc, hidden);
+        return YES;
+    } @catch (NSException *exception) {
+        NSLog(@"[YTABC SettingsRows] native presentation failed: %@", exception.reason);
+        return NO;
+    }
+}
+
+- (void)ytabc_revealButtonTapped:(UIButton *)sender {
+    NSNumber *category = objc_getAssociatedObject(sender, YTABCRevealCategoryAssociation);
+    if (!category) return;
+    NSDictionary *entry = nil;
+    for (NSDictionary *candidate in self.rows)
+        if ([candidate[@"category"] isEqual:category]) { entry = candidate; break; }
+    if (!entry || ![entry[@"loaded"] boolValue] ||
+        [entry[@"itemCount"] unsignedIntegerValue] == 0 ||
+        ![entry[@"hiddenKnown"] boolValue]) return;
+
+    NSNumber *prior = self.originalHidden[category];
+    BOOL restoring = prior != nil;
+    BOOL originalHidden = restoring ? prior.boolValue : [entry[@"hidden"] boolValue];
+    BOOL newHidden = restoring ? originalHidden : NO;
+    if (![self ytabc_setHeaderHidden:newHidden category:entry]) {
+        YTABCShowInspectorNotice(self,
+            @"This loaded section could not be republished with the verified native presentation ABI. No state was saved.");
+        return;
+    }
+    if (restoring) [self.originalHidden removeObjectForKey:category];
+    else self.originalHidden[category] = @(originalHidden);
+    [self refreshLiveCategories];
+    [self.tableView reloadData];
 }
 
 - (instancetype)initWithCategory:(NSDictionary<NSString *, id> *)category {
@@ -150,6 +256,31 @@ static NSString *YTABCReadTitle(id obj) {
     cell.detailTextLabel.numberOfLines = 3;
     cell.accessoryType = self.details || ![entry[@"loaded"] boolValue]
         ? UITableViewCellAccessoryNone : UITableViewCellAccessoryDisclosureIndicator;
+    if (!self.details && [entry[@"loaded"] boolValue] &&
+        [entry[@"hiddenKnown"] boolValue] && [entry[@"itemCount"] unsignedIntegerValue] > 0) {
+        BOOL modified = [entry[@"localOverride"] boolValue];
+        BOOL hidden = [entry[@"hidden"] boolValue];
+        if (modified || hidden) {
+            UIButton *action = [UIButton buttonWithType:UIButtonTypeSystem];
+            if (@available(iOS 26.0, *))
+                action.configuration = [UIButtonConfiguration glassButtonConfiguration];
+            else if (@available(iOS 15.0, *))
+                action.configuration = [UIButtonConfiguration tintedButtonConfiguration];
+            [action setTitle:modified ? @"Restore" : @"Reveal" forState:UIControlStateNormal];
+            action.accessibilityLabel = modified ? @"Restore native header state"
+                : @"Reveal this loaded section in original Settings";
+            objc_setAssociatedObject(action, YTABCRevealCategoryAssociation,
+                entry[@"category"], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            [action sizeToFit];
+            CGRect frame = action.frame;
+            frame.size.width = MAX(frame.size.width, 74);
+            frame.size.height = MAX(frame.size.height, 36);
+            action.frame = frame;
+            [action addTarget:self action:@selector(ytabc_revealButtonTapped:)
+                forControlEvents:UIControlEventTouchUpInside];
+            cell.accessoryView = action;
+        }
+    }
     return cell;
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
@@ -164,7 +295,7 @@ static NSString *YTABCReadTitle(id obj) {
     (void)tableView; (void)section;
     return self.details
         ? @"These are the original section-item models. Rows suppressed by server logic are not synthesized or unlocked."
-        : @"Only loaded native Settings sections can be inspected. Header-hidden does not mean account-ineligible. An absent declared section is not an unlocked menu.";
+        : @"Reveal republishes only existing native items with headerHidden:NO for this session; Restore reverts the original header state. It never enables disabled rows, creates server data, or changes account eligibility.";
 }
 @end
 
