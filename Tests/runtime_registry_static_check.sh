@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 require_text() {
     local file="$1"
     local text="$2"
-    if ! grep -Fq "$text" "$file"; then
+    if ! grep -Fq -e "$text" "$file"; then
         echo "missing '$text' in $file" >&2
         exit 1
     fi
@@ -15,7 +15,7 @@ require_text() {
 reject_text() {
     local file="$1"
     local text="$2"
-    if grep -Fq "$text" "$file"; then
+    if grep -Fq -e "$text" "$file"; then
         echo "unexpected '$text' in $file" >&2
         exit 1
     fi
