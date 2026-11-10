@@ -7,6 +7,7 @@ extern BOOL YTABRuntimeBrowserApplyMode(NSString *patchKey, NSInteger mode);
 extern NSNumber *YTABRuntimeBrowserNativeSample(NSString *patchKey);
 extern BOOL YTABRuntimeBrowserPatchInstalled(NSString *patchKey);
 extern BOOL YTABRuntimeBrowserObserveKey(NSString *patchKey);
+extern NSNumber *YTABRuntimeBrowserOverrideValue(NSString *patchKey);
 extern NSString * const YTABRuntimeNativeSampleChangedNotification;
 
 // The runtime engine implements the filter; the UI only chooses where its
@@ -40,7 +41,10 @@ static NSDictionary<NSString *, NSNumber *> *YTABModernStoredOverrides(void) {
 }
 
 static YTABModernPatchMode YTABModernModeForKey(NSString *patchKey) {
-    NSNumber *override = YTABModernStoredOverrides()[patchKey];
+    // A captured config getter uses the existing YTABC.* pref/key engine,
+    // whereas generic Runtime methods use YTABCRuntimeBrowserOverrides.
+    // Both modes are read from the SAME engine that applies them.
+    NSNumber *override = YTABRuntimeBrowserOverrideValue(patchKey);
     if (!override) return YTABModernPatchModeSystem;
     return override.boolValue ? YTABModernPatchModeForceOn : YTABModernPatchModeForceOff;
 }
@@ -279,7 +283,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
         : [[UIBarButtonItem alloc] initWithTitle:@"Clear"
                                           style:UIBarButtonItemStylePlain
                                          target:self action:@selector(clearOverrides)];
-    self.navigationItem.rightBarButtonItem.accessibilityLabel = @"Clear saved runtime patches";
+    self.navigationItem.rightBarButtonItem.accessibilityLabel = @"Clear only generic runtime method overrides";
 }
 
 - (void)dealloc {
@@ -362,7 +366,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     (void)section;
-    return @"Scope: YouTube = main binary; Frameworks = loaded app-bundled frameworks; All = both. Only eligible ObjC BOOL methods; config getters are in Raw Lab. Green ON = observed System; blue ON = override; blue label + OFF = Force OFF; ? = unknown. Long press to remove an override. Native is the last actual result, potentially receiver/argument-dependent.";
+    return @"Flags: original config BOOLs captured at launch, with known native values. Methods: general Objective-C BOOL methods (not global flags). Overrides: only modified entries. Green ON = native true; blue ON = forced true; blue text + OFF = forced false. Long press to reset to System. Methods without observed calls remain unknown.";
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView
@@ -382,9 +386,11 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 
     cell.selectorLabel.text = [NSString stringWithFormat:@"%@ %@",
                                isClassMethod ? @"+" : @"-", selectorName];
-    cell.ownerLabel.text = imageName.length
-        ? [NSString stringWithFormat:@"%@ · %@", className, imageName]
-        : className;
+    BOOL configFlag = YTABModernBoolValue(method, @"configFlag");
+    cell.ownerLabel.text = configFlag
+        ? [NSString stringWithFormat:@"%@ · original captured at launch", className]
+        : (imageName.length ? [NSString stringWithFormat:@"%@ · %@", className, imageName]
+                            : className);
 
     YTABModernPatchMode mode = YTABModernModeForKey(key);
     NSNumber *native = YTABRuntimeBrowserNativeSample(key);
@@ -597,8 +603,8 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     if (!YTABRuntimeBrowserPersistedOverrideCount()) return;
 
     UIAlertController *alert = [UIAlertController
-        alertControllerWithTitle:@"Clear saved runtime patches?"
-        message:@"Every selector returns to System immediately. Wrappers already installed in this process remain transparent pass-through hooks until restart."
+        alertControllerWithTitle:@"Clear runtime method overrides?"
+        message:@"Clears generic runtime method patches. Captured config flags are managed by the same YTABConfig flags cache and can be reset individually with long-press or in the Feature Lab."
         preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel"
                                              style:UIAlertActionStyleCancel
