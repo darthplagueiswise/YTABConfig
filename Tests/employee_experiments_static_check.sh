@@ -28,6 +28,22 @@ require_text YTABCNativeMenus.m 'id responder = owner;'
 require_text YTABCNativeMenus.m 'YTSettingsExperimentsViewController'
 require_text YTABCNativeMenus.m 'YTSettingsExperimentsResultsViewController'
 require_text Makefile 'YTABNativeExperimentsHealth.m'
+# Crash reports: YTInnerTubeCoreDataContext.init -> DataLibDataModel model load
+# on the main thread. A targeted fallback is safer than suppressing CoreData
+# exceptions or modifying unrelated model initializers.
+require_text Makefile 'YTABCoreDataModelCompatibility.m'
+require_text Makefile '$(TWEAK_NAME)_FRAMEWORKS = UIKit CoreData'
+require_text Tweak.x 'YTABCInstallCoreDataModelCompatibility();'
+require_text YTABCoreDataModelCompatibility.m 'NSManagedObjectModel'
+require_text YTABCoreDataModelCompatibility.m 'initWithContentsOfURL:'
+require_text YTABCoreDataModelCompatibility.m 'DataLibDataModel.momd'
+require_text YTABCoreDataModelCompatibility.m 'NSManagedObjectModel_CurrentVersionName'
+require_text YTABCoreDataModelCompatibility.m 'YTABCDataLibUnoptimizedModelURL(url)'
+require_text YTABCoreDataModelCompatibility.m 'sYTABCOriginalModelInit(allocated, selector, momURL)'
+require_text YTABCoreDataModelCompatibility.m 'if (sourceException) @throw sourceException;'
+reject_text YTABCoreDataModelCompatibility.m 'mergedModelFromBundles'
+reject_text YTABCoreDataModelCompatibility.m 'modelWithEntities'
+
 require_text Tweak.x 'YTABCInstallNativeExperimentsHealthHooks();'
 require_text YTABNativeExperimentsHealth.m 'initWithParentResponder:'
 require_text YTABNativeExperimentsHealth.m 'addSectionsFromArray:'
