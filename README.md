@@ -95,6 +95,15 @@ top-level experiment controller does **not** take a Googler or Heterodyne
 parameter. It is incorrect to initialize `ResultsViewController`
 independently or claim a specific account gate without runtime evidence.
 
+**Concrete launcher bug fixed:** `YTSettingsViewController` and
+`YTSettingsExperimentsViewController` both inherit from
+`YTStyledViewController`. Previously the launcher supplied
+`settingsVC.parentResponder`, skipping the live Settings controller in
+the chain. The launcher now passes the current `settingsVC` itself
+and validates the native Objective-C initializer encoding. The local
+responder chain is corrected; a populated server response is not
+guaranteed.
+
 `YTABNativeExperimentsHealth.m` hooks the original view-controller lifecycle
 and observes `updateDataForTab:`, `makeSearchWithQuery:forTabIndex:`,
 and `YTSettingsExperimentsResultsViewController.addSectionsFromArray:`.
