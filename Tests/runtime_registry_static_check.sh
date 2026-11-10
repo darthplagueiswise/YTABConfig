@@ -157,8 +157,19 @@ reject_text YTABRuntimeBrowserHooks.x "MSHookMessageEx"
 # inline title, stacked top search, multiline labels, and direct tri-state
 # controls in every row. Patching must not be hidden in an action sheet.
 require_text YTABRuntimeBrowserModern.m "UINavigationItemLargeTitleDisplayModeNever"
-require_text YTABRuntimeBrowserModern.m "UINavigationItemSearchBarPlacementStacked"
-require_text YTABRuntimeBrowserModern.m 'setSearchBarPlacementAllowsToolbarIntegration:'
+# Keep a native UISearchBar pinned in a plain table section header.
+# The old search in YouTube's navigation container vanished on scrolling.
+require_text YTABRuntimeBrowserModern.m "UITableViewStylePlain"
+require_text YTABRuntimeBrowserModern.m "viewForHeaderInSection:"
+require_text YTABRuntimeBrowserModern.m "searchBar:(UISearchBar *)searchBar textDidChange:"
+require_text YTABRuntimeBrowserModern.m "self.tableView.tableHeaderView = nil;"
+require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserNativeSample"
+require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserPatchInstalled"
+require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserApplyMode"
+require_text YTABRuntimeBrowser.m "if (value && !YTABRuntimeInstallPatchKey(key)) return NO;"
+require_text YTABRuntimeBrowser.m "BOOL YTABRuntimeBrowserApplyMode"
+require_text YTABRuntimeBrowserModern.m "Patch unavailable"
+require_text YTABRuntimeBrowserModern.m "Effective:"
 require_text YTABRuntimeBrowserModern.m "UITableViewAutomaticDimension"
 require_text YTABRuntimeBrowserModern.m "NSLineBreakByCharWrapping"
 require_text YTABRuntimeBrowserModern.m 'initWithItems:@[@"System", @"Force OFF", @"Force ON"]'
