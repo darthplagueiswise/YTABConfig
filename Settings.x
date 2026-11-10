@@ -310,6 +310,41 @@ BOOL YTABResetAllRuntimeOverrides(
             }];
         [sectionItems addObject:featureLab];
 
+        // Four prominent, working destinations inside YouTube Settings.
+        // Original native experiments are a real controller; Debug/Configs
+        // are audited local navigation hubs; Hidden Rows opens the actual
+        // live YTSettingsSectionController inventory, not synthetic rows.
+        NSArray<NSDictionary<NSString *, NSString *> *> *nativeQuickMenus = @[
+            @{@"title": @"Native Experiments — search & studies",
+              @"subtitle": @"Open the original YTSettingsExperimentsViewController and its native tabs",
+              @"route": @"experiments"},
+            @{@"title": @"Debug & QA tools",
+              @"subtitle": @"Native playback overlay, editor console, and developer diagnostics",
+              @"route": @"debug"},
+            @{@"title": @"Native Configs / Phenotype",
+              @"subtitle": @"Captured Global/Cold/Hot flags and Phenotype inventory",
+              @"route": @"configs"},
+            @{@"title": @"Hidden Settings rows",
+              @"subtitle": @"Inspect real settings categories, headers and loaded rows",
+              @"route": @"hidden"}
+        ];
+        for (NSDictionary<NSString *, NSString *> *entry in nativeQuickMenus) {
+            NSString *route = [entry[@"route"] copy];
+            YTSettingsSectionItem *action = [YTSettingsSectionItemClass
+                itemWithTitle:entry[@"title"]
+                titleDescription:entry[@"subtitle"]
+                accessibilityIdentifier:[@"YTABC_NATIVE_QUICK_" stringByAppendingString:
+                    route.uppercaseString]
+                detailTextBlock:nil
+                selectBlock:^BOOL (__unused YTSettingsCell *cell, __unused NSUInteger index) {
+                    if (!settingsViewController) return NO;
+                    if ([route isEqualToString:@"experiments"])
+                        return YTABCPushNativeExperiments(settingsViewController);
+                    return YTABCPushNativeMenuHubForCategory(settingsViewController, route);
+                }];
+            [sectionItems addObject:action];
+        }
+
         YTSettingsSectionItem *nativeExpPush = [YTSettingsSectionItemClass itemWithTitle:@"Open native experiments (push)"
             titleDescription:@"Force-open via pushViewController: on the settings nav (orphaned VC, server-driven)"
             accessibilityIdentifier:@"YTABC_NATIVE_EXPERIMENTS_PUSH"
