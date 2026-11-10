@@ -15,6 +15,7 @@ extern NSString * const YTABRuntimeNativeSampleChangedNotification;
 @interface YTABRuntimeBrowserViewController (YTABModernFiltering)
 - (void)applyFilter;
 - (NSString *)ytab_currentSearchText;
+- (UISearchController *)ytab_ownedSearchController;
 @end
 
 static NSString * const YTABModernOverridesKey = @"YTABCRuntimeBrowserOverrides";
@@ -181,6 +182,8 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 @property(nonatomic, strong) UIView *scopeHeaderView;
 @property(nonatomic, strong) UILabel *scopeHeaderLabel;
 @property(nonatomic, strong) UISearchBar *pinnedSearchBar;
+@property(nonatomic) BOOL usesNativeSearchToolbar;
+@property(nonatomic) BOOL priorToolbarHidden;
 @end
 
 @implementation YTABRuntimeBrowserModernViewController
@@ -221,21 +224,40 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
         selector:@selector(ytab_nativeSampleDidChange:)
         name:YTABRuntimeNativeSampleChangedNotification object:nil];
 
-    // Always-visible native search. YouTube's navigation wrapper can collapse
-    // the UINavigationItem-integrated search field, so retain the native
-    // UISearchBar but present it in a pinned *plain table section header*.
-    // Do NOT detach a UISearchController-owned searchBar. UIKit can reclaim
-    // or hide it while a custom navigation controller changes presentation.
-    // Keep the engine's search controller retained for legacy compatibility,
-    // but give this pinned header its own native UISearchBar and filter source.
-    self.navigationItem.searchController = nil;
-    UISearchBar *search = [[UISearchBar alloc] initWithFrame:CGRectZero];
-    search.delegate = self;
-    search.placeholder = @"Class or selector";
-    search.searchBarStyle = UISearchBarStyleMinimal;
-    search.autocorrectionType = UITextAutocorrectionTypeNo;
-    search.autocapitalizationType = UITextAutocapitalizationTypeNone;
-    self.pinnedSearchBar = search;
+    // Use iOS 26's real UINavigationItem search integration. The prior
+    // pinned table-header workaround disabled UIKit's toolbar morphing.
+    // Only pre-26 builds use the separate fixed header search field.
+    self.usesNativeSearchToolbar = NO;
+    UISearchController *nativeSearch = [self ytab_ownedSearchController];
+    if (@available(iOS 26.0, *)) {
+        if (nativeSearch && self.navigationController) {
+            self.usesNativeSearchToolbar = YES;
+            self.navigationItem.searchController = nativeSearch;
+            self.navigationItem.hidesSearchBarWhenScrolling = NO;
+            self.navigationItem.preferredSearchBarPlacement =
+                UINavigationItemSearchBarPlacementIntegrated;
+            self.navigationItem.searchBarPlacementAllowsToolbarIntegration = YES;
+            nativeSearch.searchBar.placeholder = @"Class or selector";
+            nativeSearch.searchBar.autocorrectionType = UITextAutocorrectionTypeNo;
+            nativeSearch.searchBar.autocapitalizationType =
+                UITextAutocapitalizationTypeNone;
+            UIBarButtonItem *searchItem =
+                self.navigationItem.searchBarPlacementBarButtonItem;
+            // Apple requires this placement item in toolbarItems, not a
+            // navigation bar button group (which throws an exception).
+            if (searchItem) self.toolbarItems = @[searchItem];
+        }
+    }
+    if (!self.usesNativeSearchToolbar) {
+        self.navigationItem.searchController = nil;
+        UISearchBar *search = [[UISearchBar alloc] initWithFrame:CGRectZero];
+        search.delegate = self;
+        search.placeholder = @"Class or selector";
+        search.searchBarStyle = UISearchBarStyleMinimal;
+        search.autocorrectionType = UITextAutocorrectionTypeNo;
+        search.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        self.pinnedSearchBar = search;
+    }
 
     UISegmentedControl *scope = nil;
     @try {
@@ -244,9 +266,10 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     } @catch (__unused NSException *exception) {}
     [scope removeFromSuperview];
 
-    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, 102)];
-    header.backgroundColor = [UIColor systemBackgroundColor];
-    [header addSubview:search];
+    CGFloat headerHeight = self.usesNativeSearchToolbar ? 50.0 : 102.0;
+    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, headerHeight)];
+    header.backgroundColor = [UIColor clearColor];
+    if (self.pinnedSearchBar) [header addSubview:self.pinnedSearchBar];
 
     UILabel *sourceLabel = [UILabel new];
     sourceLabel.text = @"VIEW";
@@ -289,11 +312,22 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    // Preserve UIKit's system navigation material; never install a custom
-    // translucent/blur overlay that hides the toolbar or clips search.
     self.navigationItem.titleView = nil;
     self.navigationItem.hidesSearchBarWhenScrolling = NO;
-    [self.tableView reloadData]; // native samples may have changed offscreen
+    if (self.usesNativeSearchToolbar && self.navigationController) {
+        self.priorToolbarHidden = self.navigationController.isToolbarHidden;
+        [self.navigationController setToolbarHidden:NO animated:animated];
+    }
+    [self.tableView reloadData];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    if (self.usesNativeSearchToolbar && self.navigationController &&
+        (self.isMovingFromParentViewController || self.isBeingDismissed)) {
+        [self.navigationController setToolbarHidden:self.priorToolbarHidden
+                                          animated:animated];
+    }
 }
 
 - (void)viewDidLayoutSubviews {
@@ -301,19 +335,23 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     UIView *header = self.scopeHeaderView;
     if (!header) return;
     CGFloat width = CGRectGetWidth(self.tableView.bounds);
-    header.frame = CGRectMake(0, 0, width, 102);
-    self.pinnedSearchBar.frame = CGRectMake(8, 0, MAX(0, width - 16), 52);
-    self.scopeHeaderLabel.frame = CGRectMake(20, 52, MAX(0, width - 40), 14);
+    CGFloat searchHeight = self.usesNativeSearchToolbar ? 0.0 : 52.0;
+    header.frame = CGRectMake(0, 0, width, searchHeight + 50.0);
+    if (self.pinnedSearchBar)
+        self.pinnedSearchBar.frame = CGRectMake(8, 0, MAX(0, width - 16), 52);
+    self.scopeHeaderLabel.frame = CGRectMake(20, searchHeight + 1, MAX(0, width - 40), 14);
     UISegmentedControl *scope = nil;
     @try {
         id value = [self valueForKey:@"scopeControl"];
         if ([value isKindOfClass:UISegmentedControl.class]) scope = value;
     } @catch (__unused NSException *exception) {}
-    scope.frame = CGRectMake(16, 66, MAX(0, width - 32), 31);
+    scope.frame = CGRectMake(16, searchHeight + 15, MAX(0, width - 32), 31);
 }
 
 - (NSString *)ytab_currentSearchText {
-    return self.pinnedSearchBar.text ?: @"";
+    return self.usesNativeSearchToolbar
+        ? ([self ytab_ownedSearchController].searchBar.text ?: @"")
+        : (self.pinnedSearchBar.text ?: @"");
 }
 
 - (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText {
@@ -336,7 +374,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
     (void)tableView; (void)section;
-    return 102.0;
+    return self.usesNativeSearchToolbar ? 50.0 : 102.0;
 }
 
 - (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
