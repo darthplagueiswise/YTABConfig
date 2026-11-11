@@ -795,7 +795,10 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
     BOOL searching = tokens.count > 0;
     BOOL showingOverrides = self.scopeControl.selectedSegmentIndex == 1;
     NSString *selectedCategory = self.ytab_selectedCategory ?: @"Runtime";
-    NSMutableArray<YTABRuntimeMethod *> *matches = [NSMutableArray array];
+    // Stable partition: keep native browsing order, but always show local
+    // overrides first as requested. No costly resorting or recomputation.
+    NSMutableArray<YTABRuntimeMethod *> *overridden = [NSMutableArray array];
+    NSMutableArray<YTABRuntimeMethod *> *unmodified = [NSMutableArray array];
 
     for (YTABRuntimeMethod *method in self.allMethods) {
         if (![selectedCategory isEqualToString:@"Runtime"] &&
@@ -809,7 +812,8 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
         if (!showingOverrides) {
             if (!method.configFlag && [method.selectorName containsString:@":"])
                 continue;
-            if (!searching && !method.configFlag && !override &&
+            if (!searching && [selectedCategory isEqualToString:@"Runtime"] &&
+                !method.configFlag && !override &&
                 !YTABRuntimeBrowserNativeSample(method.patchKey))
                 continue;
         }
@@ -827,9 +831,11 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
             }
             if (!matchesAll) continue;
         }
-        [matches addObject:method];
+        if (override) [overridden addObject:method];
+        else [unmodified addObject:method];
     }
-    self.visibleMethods = matches.copy;
+    [overridden addObjectsFromArray:unmodified];
+    self.visibleMethods = overridden.copy;
     [self.tableView reloadData];
 }
 
