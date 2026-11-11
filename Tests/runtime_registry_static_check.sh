@@ -240,6 +240,16 @@ require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserReinstallPersistedHoo
 require_text YTABRuntimeBrowserModern.m "Explanations belong in detail views"
 require_text YTABRuntimeBrowserModern.m "UINavigationItemSearchBarPlacementIntegratedButton"
 require_text YTABRuntimeBrowser.m "objc_copyClassNamesForImage"
+# Regression for two iOS 27 EXC_BREAKPOINT / SIGTRAP crashes (00:20:09 and
+# 01:45:50): retaining raw ObjC Class objects via NSMutableArray throws on
+# root metaclasses without +retain. Only keep NSString class names in arrays.
+require_text YTABRuntimeBrowser.m 'NSMutableArray<NSString *> *candidates = [NSMutableArray array];'
+require_text YTABRuntimeBrowser.m '[candidates addObject:className];'
+require_text YTABRuntimeBrowser.m 'for (NSString *className in candidates)'
+require_text YTABRuntimeBrowser.m 'Class cls = NSClassFromString(className);'
+reject_text YTABRuntimeBrowser.m '[candidates addObject:cls]'
+reject_text YTABRuntimeBrowser.m 'for (Class cls in candidates)'
+
 require_text YTABRuntimeBrowser.m "sYTABRuntimeMethodCatalog = generic.copy"
 require_text YTABRuntimeBrowser.m '"partialMethods": snapshot'
 require_text YTABRuntimeBrowser.m 'if (override) return override.boolValue;'
