@@ -236,9 +236,9 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
         @{
             @"title": @"Developer / QA controls",
             @"rows": @[
-                @{@"title": @"Runtime method switches",
-                  @"subtitle": @"Open the real native BOOL patch browser directly in Methods",
-                  @"kind": @"runtimeMethods"},
+                @{@"title": @"All Boolean controls",
+                  @"subtitle": @"One list for captured flags and other patchable native BOOLs",
+                  @"kind": @"runtimeControls"},
                 @{@"title": @"Toggle playback debug overlay",
                   @"subtitle": @"Requires an overlay previously created by the real player",
                   @"kind": @"playback",
@@ -711,13 +711,13 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
         [self.navigationController pushViewController:
             [[YTABRuntimeBrowserModernViewController alloc] initWithInitialScope:0]
             animated:YES];
-    } else if ([kind isEqualToString:@"runtimeMethods"]) {
+    } else if ([kind isEqualToString:@"runtimeControls"]) {
         [self.navigationController pushViewController:
-            [[YTABRuntimeBrowserModernViewController alloc] initWithInitialScope:1]
+            [[YTABRuntimeBrowserModernViewController alloc] initWithInitialScope:0]
             animated:YES];
     } else if ([kind isEqualToString:@"runtimeOverrides"]) {
         [self.navigationController pushViewController:
-            [[YTABRuntimeBrowserModernViewController alloc] initWithInitialScope:2]
+            [[YTABRuntimeBrowserModernViewController alloc] initWithInitialScope:1]
             animated:YES];
     } else if ([kind isEqualToString:@"settingsHidden"]) {
         [self.navigationController pushViewController:
