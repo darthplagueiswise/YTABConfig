@@ -207,30 +207,39 @@ static BOOL YTABRuntimeInstallPatchKey(NSString *key) {
 
     if (argumentKind == YTABRuntimeArgumentKindNone) {
         replacement = imp_implementationWithBlock(^BOOL(id receiver) {
+            // Force ON/OFF must short-circuit the original implementation.
+            // Only System executes the getter and records its native result.
+            NSNumber *override = YTABRuntimeCachedOverride(capturedKey);
+            if (override) return override.boolValue;
             BOOL nativeValue = original
                 ? ((BOOL (*)(id, SEL))original)(receiver, capturedSelector)
                 : NO;
             YTABRuntimeRememberNative(capturedKey, nativeValue);
-            NSNumber *override = YTABRuntimeCachedOverride(capturedKey);
-            return override ? override.boolValue : nativeValue;
+            return nativeValue;
         });
     } else if (argumentKind == YTABRuntimeArgumentKindObject) {
         replacement = imp_implementationWithBlock(^BOOL(id receiver, id argument) {
+            // Force ON/OFF must short-circuit the original implementation.
+            // Only System executes the getter and records its native result.
+            NSNumber *override = YTABRuntimeCachedOverride(capturedKey);
+            if (override) return override.boolValue;
             BOOL nativeValue = original
                 ? ((BOOL (*)(id, SEL, id))original)(receiver, capturedSelector, argument)
                 : NO;
             YTABRuntimeRememberNative(capturedKey, nativeValue);
-            NSNumber *override = YTABRuntimeCachedOverride(capturedKey);
-            return override ? override.boolValue : nativeValue;
+            return nativeValue;
         });
     } else if (argumentKind == YTABRuntimeArgumentKindInteger) {
         replacement = imp_implementationWithBlock(^BOOL(id receiver, uint64_t argument) {
+            // Force ON/OFF must short-circuit the original implementation.
+            // Only System executes the getter and records its native result.
+            NSNumber *override = YTABRuntimeCachedOverride(capturedKey);
+            if (override) return override.boolValue;
             BOOL nativeValue = original
                 ? ((BOOL (*)(id, SEL, uint64_t))original)(receiver, capturedSelector, argument)
                 : NO;
             YTABRuntimeRememberNative(capturedKey, nativeValue);
-            NSNumber *override = YTABRuntimeCachedOverride(capturedKey);
-            return override ? override.boolValue : nativeValue;
+            return nativeValue;
         });
     }
 
