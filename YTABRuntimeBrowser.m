@@ -475,28 +475,40 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImage
     // The YouTube executable is the only generic-method source. Query its
     // image directly first instead of inspecting every injected/system class.
     // Fall back to the global class list if dyld cannot resolve the image.
-    NSMutableArray *candidates = [NSMutableArray array];
+    // Critical: NEVER place ObjC Class objects in Foundation collections.
+    // YouTube includes ObjC runtime root classes whose metaclasses do not
+    // implement +retain. NSMutableArray insertObject:atIndex: retains the
+    // class object and raises an unrecognized-selector SIGTRAP on the worker
+    // queue. Both supplied 2026-11-11 crash logs faulted at that call.
+    // Store NSString class names (retainable objects) and resolve Class only
+    // when inspecting each entry. Keep the worker scan read-only.
+    NSMutableArray<NSString *> *candidates = [NSMutableArray array];
     unsigned int imageClassCount = 0;
     const char **imageNames = objc_copyClassNamesForImage(
         [NSBundle mainBundle].executablePath.fileSystemRepresentation, &imageClassCount);
     if (imageNames && imageClassCount) {
         for (unsigned int index = 0; index < imageClassCount; ++index) {
-            Class cls = objc_getClass(imageNames[index]);
-            if (cls && YTABRuntimeIsMainExecutableClass(cls))
-                [candidates addObject:cls];
+            const char *name = imageNames[index];
+            if (!name || !name[0]) continue;
+            Class cls = objc_getClass(name);
+            if (!cls || !YTABRuntimeIsMainExecutableClass(cls)) continue;
+            NSString *className = [NSString stringWithUTF8String:name];
+            if (className.length) [candidates addObject:className];
         }
     } else {
         unsigned int classCount = 0;
         Class *classes = objc_copyClassList(&classCount);
         for (unsigned int index = 0; classes && index < classCount; ++index) {
             Class cls = classes[index];
-            if (YTABRuntimeIsMainExecutableClass(cls)) [candidates addObject:cls];
+            if (!YTABRuntimeIsMainExecutableClass(cls)) continue;
+            NSString *className = NSStringFromClass(cls);
+            if (className.length) [candidates addObject:className];
         }
         if (classes) free(classes);
     }
     if (imageNames) free(imageNames);
     NSUInteger scannedClasses = 0, totalClasses = candidates.count;
-    for (Class cls in candidates) {
+    for (NSString *className in candidates) {
         scannedClasses++;
         if (scannedClasses % 250 == 0 || scannedClasses == totalClasses) {
             NSUInteger done = scannedClasses;
@@ -506,8 +518,9 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImage
                     object:nil userInfo:@{@"done": @(done), @"total": @(totalClasses)}];
             });
         }
-        NSString *className = NSStringFromClass(cls);
         if (!className.length || YTABRuntimeClassExcluded(className)) continue;
+        Class cls = NSClassFromString(className);
+        if (!cls || !YTABRuntimeIsMainExecutableClass(cls)) continue;
         for (NSUInteger pass = 0; pass < 2; pass++) {
             BOOL isClassMethod = pass == 1;
             Class owner = isClassMethod ? object_getClass(cls) : cls;
