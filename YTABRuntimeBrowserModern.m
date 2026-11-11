@@ -380,9 +380,15 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     [self ytab_setCategoryFilter:category];
     self.renderedCategories = nil;
     [self ytab_refreshCategoryChips];
-    [self.categoryScroller scrollRectToVisible:
-        [button convertRect:button.bounds toView:self.categoryScroller]
-                                  animated:YES];
+    // The old chip was removed during the selection refresh. Scroll using
+    // its replacement; converting a detached view's bounds can crash UIKit.
+    for (UIButton *chip in self.categoryStack.arrangedSubviews) {
+        NSString *label = objc_getAssociatedObject(chip, YTABModernPatchKeyAssociation);
+        if (![label isEqualToString:category]) continue;
+        CGRect target = [chip convertRect:chip.bounds toView:self.categoryScroller];
+        [self.categoryScroller scrollRectToVisible:target animated:YES];
+        break;
+    }
 }
 
 - (void)applyFilter {
