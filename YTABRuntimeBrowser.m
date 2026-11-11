@@ -596,6 +596,24 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImage
     return complete;
 }
 
+// Groups use only native ObjC class metadata, never inferred eligibility.
+static NSString *YTABRuntimeFamilyForClassName(NSString *name) {
+    if ([name isEqualToString:@"YTColdConfig"]) return @"ColdConfig";
+    if ([name isEqualToString:@"YTHotConfig"]) return @"HotConfig";
+    if ([name isEqualToString:@"YTGlobalConfig"]) return @"GlobalConfig";
+    NSString *lower = name.lowercaseString ?: @"";
+    if ([lower containsString:@"phenotype"]) return @"Phenotype";
+    if ([lower containsString:@"experiment"] || [lower containsString:@"abflag"] ||
+        [lower containsString:@"abprop"] || [lower containsString:@"study"])
+        return @"Experiments";
+    if ([lower containsString:@"remoteconfig"] || [lower containsString:@"metaconfig"])
+        return @"RemoteConfig";
+    if ([lower containsString:@"settings"]) return @"Settings";
+    if ([lower containsString:@"playback"] || [lower containsString:@"player"])
+        return @"Playback";
+    return @"Other";
+}
+
 static NSArray<NSString *> *YTABRuntimeSearchTokens(NSString *query) {
     NSMutableArray *tokens = [NSMutableArray array];
     for (NSString *component in [query componentsSeparatedByCharactersInSet:
@@ -612,6 +630,7 @@ static NSArray<NSString *> *YTABRuntimeSearchTokens(NSString *query) {
 @property(nonatomic, strong) NSArray<YTABRuntimeMethod *> *visibleMethods;
 @property(nonatomic, strong) UISearchController *searchController;
 @property(nonatomic, strong) UISegmentedControl *scopeControl;
+@property(nonatomic, copy) NSString *ytab_selectedCategory;
 @property(nonatomic) NSUInteger scanGeneration;
 @property(nonatomic, strong) UILabel *scanProgressLabel;
 @end
@@ -645,6 +664,7 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
     self.scopeControl = [[UISegmentedControl alloc]
         initWithItems:@[@"All BOOLs", @"Overrides"]];
     self.scopeControl.selectedSegmentIndex = YTABRuntimeImageScopeFlags;
+    self.ytab_selectedCategory = @"Runtime";
     [self.scopeControl addTarget:self action:@selector(scopeChanged:)
                 forControlEvents:UIControlEventValueChanged];
     self.navigationItem.titleView = self.scopeControl;
@@ -774,9 +794,13 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
     NSArray<NSString *> *tokens = YTABRuntimeSearchTokens([self ytab_currentSearchText]);
     BOOL searching = tokens.count > 0;
     BOOL showingOverrides = self.scopeControl.selectedSegmentIndex == 1;
+    NSString *selectedCategory = self.ytab_selectedCategory ?: @"Runtime";
     NSMutableArray<YTABRuntimeMethod *> *matches = [NSMutableArray array];
 
     for (YTABRuntimeMethod *method in self.allMethods) {
+        if (![selectedCategory isEqualToString:@"Runtime"] &&
+            ![YTABRuntimeFamilyForClassName(method.className)
+              isEqualToString:selectedCategory]) continue;
         // The default collection must show actual states, not thousands of
         // unobserved Objective-C selectors. A deliberate search can find a
         // compatible no-argument getter to explicitly patch or observe.
@@ -807,6 +831,28 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
     }
     self.visibleMethods = matches.copy;
     [self.tableView reloadData];
+}
+
+// Category changes only filter already discovered items; no new hooks
+// are installed, no config refresh is forced, and no network calls occur.
+- (void)ytab_setCategoryFilter:(NSString *)category {
+    NSString *next = category.length ? category : @"Runtime";
+    if ([self.ytab_selectedCategory isEqualToString:next]) return;
+    self.ytab_selectedCategory = next;
+    [self applyFilter];
+}
+
+- (NSArray<NSString *> *)ytab_availableCategories {
+    NSMutableSet<NSString *> *families = [NSMutableSet set];
+    for (YTABRuntimeMethod *method in self.allMethods)
+        [families addObject:YTABRuntimeFamilyForClassName(method.className)];
+    NSMutableArray<NSString *> *names = [NSMutableArray arrayWithArray:
+        @[@"Runtime", @"Phenotype", @"ColdConfig", @"HotConfig", @"GlobalConfig"]];
+    for (NSString *extra in @[@"Experiments", @"RemoteConfig",
+                               @"Settings", @"Playback", @"Other"]) {
+        if ([families containsObject:extra]) [names addObject:extra];
+    }
+    return names.copy;
 }
 
 - (void)updateSearchResultsForSearchController:(UISearchController *)searchController {
