@@ -113,7 +113,11 @@ static NSString *YTABExportTimestamp(void) {
 
 static void YTABConfigureSelfSizingTable(UITableView *tableView) {
     tableView.rowHeight = UITableViewAutomaticDimension;
-    tableView.estimatedRowHeight = 76.0;
+    tableView.estimatedRowHeight = 78.0;
+    tableView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentAutomatic;
+    tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
+    tableView.backgroundColor = UIColor.systemGroupedBackgroundColor;
+    if (@available(iOS 15.0, *)) tableView.sectionHeaderTopPadding = 8.0;
 }
 
 static NSString *YTABReadableTitle(NSString *selector) {
@@ -495,7 +499,7 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
                             mode:(YTABLabListMode)mode
                            title:(NSString *)title
                      beginSearch:(BOOL)beginSearch {
-    self = [super initWithStyle:UITableViewStyleGrouped];
+    self = [super initWithStyle:UITableViewStyleInsetGrouped];
     if (self) {
         _provider = provider;
         _mode = mode;
@@ -507,7 +511,11 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
         self.navigationItem.searchController = _searchController;
         // Persistent top search (iOS 26/27); never collapse the bar on scroll.
         self.navigationItem.hidesSearchBarWhenScrolling = NO;
-        if (@available(iOS 16.0, *)) {
+        if (@available(iOS 26.0, *)) {
+            self.navigationItem.preferredSearchBarPlacement =
+                UINavigationItemSearchBarPlacementIntegratedButton;
+            self.navigationItem.searchBarPlacementAllowsToolbarIntegration = NO;
+        } else if (@available(iOS 16.0, *)) {
             self.navigationItem.preferredSearchBarPlacement =
                 UINavigationItemSearchBarPlacementStacked;
         }
@@ -525,6 +533,7 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
 - (void)viewDidLoad {
     [super viewDidLoad];
     YTABConfigureSelfSizingTable(self.tableView);
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -616,12 +625,19 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
         : @"System";
     cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ • %@ / %@\n%@ · %@ · %@",
         flag.status, flag.category, flag.risk, native, effective, overrideState];
-    cell.detailTextLabel.numberOfLines = 2;
+    cell.detailTextLabel.numberOfLines = 3;
     cell.selectionStyle = UITableViewCellSelectionStyleDefault;
 
-    UIView *accessory = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 122, 32)];
+    // Keep the toggle readable on compact iPhones and expose Reset only
+    // while an actual override exists; don't reserve wasted space in every row.
+    CGFloat accessoryWidth = flag.hasOverride ? 120.0 : 60.0;
+    UIView *accessory = [[UIView alloc] initWithFrame:CGRectMake(0, 0, accessoryWidth, 38)];
     UIButton *reset = [UIButton buttonWithType:UIButtonTypeSystem];
-    reset.frame = CGRectMake(0, 0, 58, 32);
+    reset.frame = CGRectMake(0, 1, 56, 36);
+    if (@available(iOS 26.0, *))
+        reset.configuration = [UIButtonConfiguration glassButtonConfiguration];
+    else if (@available(iOS 15.0, *))
+        reset.configuration = [UIButtonConfiguration tintedButtonConfiguration];
     [reset setTitle:@"Reset" forState:UIControlStateNormal];
     reset.enabled = flag.hasOverride;
     reset.alpha = flag.hasOverride ? 1.0 : 0.35;
@@ -632,8 +648,10 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
         : [NSString stringWithFormat:@"Restores the native value for %@.%@",
             flag.sourceClass, flag.rawSelector];
     [reset addTarget:self action:@selector(resetTapped:) forControlEvents:UIControlEventTouchUpInside];
-    [accessory addSubview:reset];
-    UISwitch *toggle = [[UISwitch alloc] initWithFrame:CGRectMake(64, 0, 58, 32)];
+    if (flag.hasOverride) [accessory addSubview:reset];
+    UISwitch *toggle = [[UISwitch alloc] initWithFrame:CGRectMake(
+        flag.hasOverride ? 64 : 2, 2, 58, 34)];
+    toggle.onTintColor = flag.hasOverride ? UIColor.systemBlueColor : UIColor.systemGreenColor;
     toggle.on = flag.effectiveValue;
     toggle.enabled = !flag.removed && flag.hasEffectiveValue;
     toggle.accessibilityLabel = [NSString stringWithFormat:@"Override %@", flag.readableTitle];
@@ -678,7 +696,7 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
 @implementation YTABLabDetailViewController
 
 - (instancetype)initWithFlag:(YTABLabFlag *)flag provider:(id<YTABLabRuntimeProviding>)provider {
-    self = [super initWithStyle:UITableViewStyleGrouped];
+    self = [super initWithStyle:UITableViewStyleInsetGrouped];
     if (self) {
         _flag = flag;
         _provider = provider;
@@ -690,6 +708,7 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
 - (void)viewDidLoad {
     [super viewDidLoad];
     YTABConfigureSelfSizingTable(self.tableView);
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -716,7 +735,9 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
 - (UITableViewCell *)detailCellWithTitle:(NSString *)title value:(NSString *)value {
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     cell.textLabel.text = title;
+    cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
     cell.detailTextLabel.text = value;
+    cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
     cell.detailTextLabel.numberOfLines = 0;
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
     return cell;
@@ -744,6 +765,7 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
             UITableViewCell *cell = [self detailCellWithTitle:@"Override value"
                                                        value:flag.hasOverride ? YTABBooleanText(flag.effectiveValue) : @"Not set"];
             UISwitch *toggle = [UISwitch new];
+            toggle.onTintColor = flag.hasOverride ? UIColor.systemBlueColor : UIColor.systemGreenColor;
             toggle.on = flag.effectiveValue;
             toggle.enabled = !flag.removed;
             toggle.accessibilityLabel = [NSString stringWithFormat:@"Override %@", flag.readableTitle];
@@ -800,7 +822,7 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
 @implementation YTABLabDashboardViewController
 
 - (instancetype)initWithProvider:(id<YTABLabRuntimeProviding>)provider {
-    self = [super initWithStyle:UITableViewStyleGrouped];
+    self = [super initWithStyle:UITableViewStyleInsetGrouped];
     if (self) {
         _provider = provider;
         self.title = @"Feature Lab";
@@ -811,6 +833,7 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
 - (void)viewDidLoad {
     [super viewDidLoad];
     YTABConfigureSelfSizingTable(self.tableView);
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -853,8 +876,12 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
 - (UITableViewCell *)navigationCellWithTitle:(NSString *)title subtitle:(NSString *)subtitle {
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     cell.textLabel.text = title;
+    cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    cell.textLabel.adjustsFontForContentSizeCategory = YES;
     cell.detailTextLabel.text = subtitle;
-    cell.detailTextLabel.numberOfLines = 2;
+    cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    cell.detailTextLabel.adjustsFontForContentSizeCategory = YES;
+    cell.detailTextLabel.numberOfLines = 3;
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     return cell;
 }
