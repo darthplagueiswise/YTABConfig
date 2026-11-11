@@ -16,6 +16,7 @@ extern NSString * const YTABRuntimeNativeSampleChangedNotification;
 - (void)applyFilter;
 - (NSString *)ytab_currentSearchText;
 - (UISearchController *)ytab_ownedSearchController;
+- (void)scopeChanged:(UISegmentedControl *)sender;
 @end
 
 static NSString * const YTABModernOverridesKey = @"YTABCRuntimeBrowserOverrides";
@@ -182,6 +183,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 @property(nonatomic, strong) UIView *scopeHeaderView;
 @property(nonatomic, strong) UISearchBar *pinnedSearchBar;
 @property(nonatomic) BOOL usesNativeSearchPlacement;
+@property(nonatomic) NSInteger ytab_initialScope;
 @end
 
 @implementation YTABRuntimeBrowserModernViewController
@@ -190,7 +192,12 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 // Inset-grouped headers and iOS 26's automatic toolbar search can disappear
 // behind YouTube's custom settings navigation container.
 - (instancetype)init {
-    return [super initWithStyle:UITableViewStylePlain];
+    return [self initWithInitialScope:0];
+}
+- (instancetype)initWithInitialScope:(NSInteger)scope {
+    self = [super initWithStyle:UITableViewStylePlain];
+    if (self) _ytab_initialScope = MAX(0, MIN(2, scope));
+    return self;
 }
 
 - (NSArray *)ytab_visibleMethods {
@@ -263,6 +270,11 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
         if ([value isKindOfClass:UISegmentedControl.class]) scope = value;
     } @catch (__unused NSException *exception) {}
     [scope removeFromSuperview];
+    if (scope && self.ytab_initialScope != 0 &&
+        scope.selectedSegmentIndex != self.ytab_initialScope) {
+        scope.selectedSegmentIndex = self.ytab_initialScope;
+        [self scopeChanged:scope];
+    }
 
     CGFloat headerHeight = self.usesNativeSearchPlacement ? 46.0 : 98.0;
     UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, headerHeight)];
