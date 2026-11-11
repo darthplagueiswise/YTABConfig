@@ -232,7 +232,7 @@ require_text YTABRuntimeBrowserModern.m "UISwitch *overrideSwitch"
 require_text YTABRuntimeBrowserModern.m "overrideSwitchChanged:"
 require_text YTABRuntimeBrowserModern.m "ytab_modeMenuForKey:"
 require_text YTABRuntimeBrowserModern.m 'NSArray<NSString *> *titles = @[@"System", @"Force OFF", @"Force ON"]'
-require_text YTABRuntimeBrowserModern.m "UIFontTextStyleSubheadline"
+require_text YTABRuntimeBrowserModern.m "UIFontTextStyleBody"
 require_text YTABRuntimeBrowserModern.m "UIFontTextStyleCaption2"
 reject_text YTABRuntimeBrowserModern.m "monospacedSystemFontOfSize:15.0"
 require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserReinstallPersistedHooks();"
