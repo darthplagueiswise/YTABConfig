@@ -474,6 +474,7 @@ static NSString *YTABReadableTitle(NSString *selector) {
 @property(nonatomic, copy) NSArray<YTABLabFlag *> *flags;
 @property(nonatomic, copy) NSArray<YTABLabFlag *> *visibleFlags;
 @property(nonatomic, strong) UISearchController *searchController;
+@property(nonatomic) BOOL ytab_activateSearchOnAppearance;
 - (instancetype)initWithProvider:(id<YTABLabRuntimeProviding>)provider
                             mode:(YTABLabListMode)mode
                            title:(NSString *)title
@@ -520,12 +521,7 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
                 UINavigationItemSearchBarPlacementStacked;
         }
         self.definesPresentationContext = YES;
-        if (beginSearch) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                self.searchController.active = YES;
-                [self.searchController.searchBar becomeFirstResponder];
-            });
-        }
+        _ytab_activateSearchOnAppearance = beginSearch;
     }
     return self;
 }
@@ -539,6 +535,16 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     [self reloadFlags];
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    // Search presentation is only valid once the list is in a live window.
+    if (self.ytab_activateSearchOnAppearance) {
+        self.ytab_activateSearchOnAppearance = NO;
+        self.searchController.active = YES;
+        [self.searchController.searchBar becomeFirstResponder];
+    }
 }
 
 - (void)reloadFlags {
