@@ -203,9 +203,6 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
         @{
             @"title": @"Native experiment screens",
             @"rows": @[
-                @{@"title": @"Eligibility / request diagnosis",
-                  @"subtitle": @"Categories 30 and 37, native checks, search completion and server errors",
-                  @"kind": @"eligibilityReport"},
                 // This exact root constructs the native results controller,
                 // per original ARM64: classref 0x10cbdada8 (0x101434748).
                 // YTSettingsExperimentsResultsViewController is a child, not
@@ -230,12 +227,18 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
                   @"kind": @"experimentsHealth"},
                 @{@"title": @"Study cells and opt-in report",
                   @"subtitle": @"Observed layout, badge, opt-in controls and native callbacks",
-                  @"kind": @"studyControlsHealth"}
+                  @"kind": @"studyControlsHealth"},
+                @{@"title": @"Eligibility / request report",
+                  @"subtitle": @"Native service results and real category construction, not a menu bypass",
+                  @"kind": @"eligibilityReport"}
             ]
         },
         @{
-            @"title": @"Playback and creation diagnostics",
+            @"title": @"Developer / QA controls",
             @"rows": @[
+                @{@"title": @"Runtime method switches",
+                  @"subtitle": @"Open the real native BOOL patch browser directly in Methods",
+                  @"kind": @"runtimeMethods"},
                 @{@"title": @"Toggle playback debug overlay",
                   @"subtitle": @"Requires an overlay previously created by the real player",
                   @"kind": @"playback",
@@ -274,7 +277,10 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
                   @"kind": @"configFlags"},
                 @{@"title": @"YouTube config inventory",
                   @"subtitle": @"Cold, Hot, Global and flag-ID infrastructure (read only)",
-                  @"kind": @"config"}
+                  @"kind": @"config"},
+                @{@"title": @"Active runtime overrides",
+                  @"subtitle": @"Review and remove currently stored local method overrides",
+                  @"kind": @"runtimeOverrides"}
             ]
         },
         @{
@@ -312,7 +318,12 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.tableView.rowHeight = UITableViewAutomaticDimension;
-    self.tableView.estimatedRowHeight = 68;
+    self.tableView.estimatedRowHeight = 72;
+    self.tableView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentAutomatic;
+    self.tableView.backgroundColor = UIColor.systemGroupedBackgroundColor;
+    self.tableView.separatorInset = UIEdgeInsetsMake(0, 18, 0, 18);
+    if (@available(iOS 15.0, *)) self.tableView.sectionHeaderTopPadding = 8;
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
     self.tableView.accessibilityIdentifier = @"YTABC_NATIVE_TOOLS";
 }
 
@@ -340,10 +351,10 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
                                                    reuseIdentifier:nil];
     cell.textLabel.text = entry[@"title"];
     cell.textLabel.numberOfLines = 2;
-    cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+    cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
     cell.textLabel.adjustsFontForContentSizeCategory = YES;
     cell.detailTextLabel.text = entry[@"subtitle"];
-    cell.detailTextLabel.numberOfLines = 3;
+    cell.detailTextLabel.numberOfLines = 2;
     cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
     cell.detailTextLabel.adjustsFontForContentSizeCategory = YES;
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
@@ -371,6 +382,16 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
                 ? @"No live playback overlay. Open a video first."
                 : @"The native debug console has not been initialized.";
         }
+    }
+    // A report/inspection is not a native launchable destination. Avoid
+    // presenting inventory rows with the same affordance as real actions.
+    NSSet *reports = [NSSet setWithArray:@[@"watch", @"lens", @"phenotype",
+        @"developer", @"config", @"eligibilityReport", @"experimentsHealth",
+        @"studyControlsHealth"]];
+    if ([reports containsObject:kind]) {
+        cell.accessoryType = UITableViewCellAccessoryNone;
+        cell.imageView.image = [UIImage systemImageNamed:@"info.circle"];
+        cell.imageView.tintColor = UIColor.tertiaryLabelColor;
     }
     NSString *className = entry[@"class"];
     if (className && !NSClassFromString(className)) {
@@ -688,7 +709,16 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
         [self pushNativeController:entry[@"class"]];
     } else if ([kind isEqualToString:@"configFlags"]) {
         [self.navigationController pushViewController:
-            [YTABRuntimeBrowserModernViewController new] animated:YES];
+            [[YTABRuntimeBrowserModernViewController alloc] initWithInitialScope:0]
+            animated:YES];
+    } else if ([kind isEqualToString:@"runtimeMethods"]) {
+        [self.navigationController pushViewController:
+            [[YTABRuntimeBrowserModernViewController alloc] initWithInitialScope:1]
+            animated:YES];
+    } else if ([kind isEqualToString:@"runtimeOverrides"]) {
+        [self.navigationController pushViewController:
+            [[YTABRuntimeBrowserModernViewController alloc] initWithInitialScope:2]
+            animated:YES];
     } else if ([kind isEqualToString:@"settingsHidden"]) {
         [self.navigationController pushViewController:
             YTABCCreateSettingsRowsInspector(owner) animated:YES];
