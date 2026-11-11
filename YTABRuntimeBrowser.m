@@ -14,6 +14,7 @@ typedef NS_ENUM(NSInteger, YTABRuntimeImageScope) {
     YTABRuntimeImageScopeFlags = 0,      // original launch-captured config BOOLs
     YTABRuntimeImageScopeMethods = 1,    // general runtime methods, not flags
     YTABRuntimeImageScopeOverrides = 2,  // only overridden entries
+    YTABRuntimeImageScopeAll = 3,        // combined config flags + native BOOLs
 };
 
 typedef NS_ENUM(NSInteger, YTABRuntimeArgumentKind) {
@@ -422,6 +423,43 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImage
         return results.copy;
     }
 
+    // The unified controls view starts with captured config BOOLs and appends
+    // compatible Objective-C BOOL getters. Cache the generic inventory so
+    // switching tabs never repeats an expensive class sweep.
+    if (scope == YTABRuntimeImageScopeAll) {
+        NSArray<YTABRuntimeMethod *> *cached = nil;
+        @synchronized([YTABRuntimeMethod class]) {
+            cached = sYTABRuntimeMethodCatalog;
+        }
+        if (cached) {
+            for (YTABRuntimeMethod *method in cached) {
+                if (![seen containsObject:method.patchKey]) {
+                    [seen addObject:method.patchKey];
+                    [results addObject:method];
+                }
+            }
+            [results sortUsingComparator:^NSComparisonResult(
+                YTABRuntimeMethod *a, YTABRuntimeMethod *b) {
+                NSComparisonResult order =
+                    [a.className localizedCaseInsensitiveCompare:b.className];
+                return order == NSOrderedSame
+                    ? [a.selectorName localizedCaseInsensitiveCompare:b.selectorName]
+                    : order;
+            }];
+            return results.copy;
+        }
+        // Display launch-captured flags immediately; generic getters stream
+        // into the same results list as the native image scan progresses.
+        if (results.count) {
+            NSArray *snapshot = results.copy;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [[NSNotificationCenter defaultCenter]
+                    postNotificationName:YTABRuntimeInventoryProgressNotification
+                    object:nil userInfo:@{@"partialMethods": snapshot}];
+            });
+        }
+    }
+
     // The generic method inventory is deliberately segregated from flags:
     // selectors with arguments or arbitrary receivers cannot have one
     // global current BOOL until a real invocation has been observed.
@@ -491,7 +529,8 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImage
         // Show useful results immediately, without waiting for an entire
         // image-wide Objective-C class scan. Snapshot at bounded intervals;
         // the final sorted catalogue still replaces this partial view.
-        if (scope == YTABRuntimeImageScopeMethods && results.count &&
+        if ((scope == YTABRuntimeImageScopeMethods ||
+             scope == YTABRuntimeImageScopeAll) && results.count &&
             (scannedClasses == 300 || (scannedClasses % 1200) == 0)) {
             NSArray<YTABRuntimeMethod *> *snapshot = results.copy;
             NSUInteger done = scannedClasses;
@@ -515,9 +554,15 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImage
         return [a.selectorName localizedCaseInsensitiveCompare:b.selectorName];
     }];
     NSArray<YTABRuntimeMethod *> *complete = results.copy;
-    if (scope == YTABRuntimeImageScopeMethods) {
+    if (scope == YTABRuntimeImageScopeMethods ||
+        scope == YTABRuntimeImageScopeAll) {
+        // Don't put launch-captured flags into the generic catalog: they
+        // must be reread from the current session on each combined load.
+        NSMutableArray<YTABRuntimeMethod *> *generic = [NSMutableArray array];
+        for (YTABRuntimeMethod *method in complete)
+            if (!method.configFlag) [generic addObject:method];
         @synchronized([YTABRuntimeMethod class]) {
-            sYTABRuntimeMethodCatalog = complete;
+            sYTABRuntimeMethodCatalog = generic.copy;
         }
     }
     return complete;
@@ -567,7 +612,10 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
     self.tableView.rowHeight = 58.0;
     self.tableView.estimatedRowHeight = 58.0;
 
-    self.scopeControl = [[UISegmentedControl alloc] initWithItems:@[@"Flags", @"Methods", @"Overrides"]];
+    // Exactly two user-facing collections. Generic methods are part of the
+    // same BOOL controls list, not a separate confusing "Methods" tab.
+    self.scopeControl = [[UISegmentedControl alloc]
+        initWithItems:@[@"All BOOLs", @"Overrides"]];
     self.scopeControl.selectedSegmentIndex = YTABRuntimeImageScopeFlags;
     [self.scopeControl addTarget:self action:@selector(scopeChanged:)
                 forControlEvents:UIControlEventValueChanged];
@@ -615,9 +663,9 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
     hint.textColor = UIColor.secondaryLabelColor;
     hint.textAlignment = NSTextAlignmentCenter;
     hint.numberOfLines = 0;
-    hint.text = self.scopeControl.selectedSegmentIndex == YTABRuntimeImageScopeMethods
-        ? @"Indexing YouTube methods for the first time. This may take longer on large builds."
-        : @"Loading captured runtime values…";
+    hint.text = self.scopeControl.selectedSegmentIndex == 0
+        ? @"Loading native Boolean controls…"
+        : @"Loading active local overrides…";
     UIStackView *progress = [[UIStackView alloc] initWithArrangedSubviews:@[indicator, hint]];
     progress.axis = UILayoutConstraintAxisVertical;
     progress.alignment = UIStackViewAlignmentCenter;
@@ -633,9 +681,10 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
     self.tableView.backgroundView = loading;
     self.scanProgressLabel = hint;
 
-    YTABRuntimeImageScope scope = (YTABRuntimeImageScope)self.scopeControl.selectedSegmentIndex;
+    YTABRuntimeImageScope scope = self.scopeControl.selectedSegmentIndex == 0
+        ? YTABRuntimeImageScopeAll : YTABRuntimeImageScopeOverrides;
     __weak typeof(self) weakSelf = self;
-    dispatch_queue_t queue = scope == YTABRuntimeImageScopeMethods
+    dispatch_queue_t queue = scope == YTABRuntimeImageScopeAll
         ? YTABRuntimeInventoryQueue()
         : dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
     dispatch_async(queue, ^{
@@ -653,11 +702,9 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
                 empty.textColor = UIColor.secondaryLabelColor;
                 empty.numberOfLines = 0;
                 empty.textAlignment = NSTextAlignmentCenter;
-                empty.text = scope == YTABRuntimeImageScopeFlags
-                    ? @"No captured config BOOLs. Enable YTABConfig's main switch and restart YouTube to capture original YTGlobalConfig / YTColdConfig / YTHotConfig values."
-                    : scope == YTABRuntimeImageScopeOverrides
-                    ? @"No stored overrides in the currently captured config and runtime catalog."
-                    : @"No compatible runtime BOOL methods were discovered in the main YouTube executable.";
+                empty.text = scope == YTABRuntimeImageScopeOverrides
+                    ? @"No local overrides. Choose a Boolean control to force ON or OFF."
+                    : @"No compatible Boolean controls were found in the current app process.";
                 strongSelf.tableView.backgroundView = empty;
             }
         });
@@ -665,7 +712,7 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
 }
 
 - (void)ytabc_inventoryProgress:(NSNotification *)notification {
-    if (self.scopeControl.selectedSegmentIndex != YTABRuntimeImageScopeMethods ||
+    if (self.scopeControl.selectedSegmentIndex != 0 ||
         !self.scanProgressLabel) return;
     NSUInteger done = [notification.userInfo[@"done"] unsignedIntegerValue];
     NSUInteger total = [notification.userInfo[@"total"] unsignedIntegerValue];
@@ -675,9 +722,8 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
     NSArray *partial = notification.userInfo[@"partialMethods"];
     if ([partial isKindOfClass:NSArray.class] && partial.count) {
         self.allMethods = partial;
+        self.tableView.backgroundView = nil; // usable controls, not a spinner
         [self applyFilter];
-        // The spinner remains visible for progress only until completion.
-        // Rows themselves are interactive during the ongoing scan.
     }
 }
 
@@ -734,12 +780,12 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
-    return [NSString stringWithFormat:@"%lu patchable BOOL methods",
+    return [NSString stringWithFormat:@"%lu Boolean controls",
             (unsigned long)self.visibleMethods.count];
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    return @"Tap a method to choose System, Force OFF, or Force ON. Only saved patch keys are reinstalled at launch; discovery runs only while this browser is open. Keep the older fixed employee-test switches off while using this browser.";
+    return @"Local overrides can force ON, force OFF, or restore the native result. Some getters need a real invocation before their original value is known.";
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView
