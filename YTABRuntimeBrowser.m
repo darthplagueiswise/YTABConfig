@@ -133,12 +133,15 @@ static BOOL YTABRuntimeMethodSupported(Method method) {
 
 static BOOL YTABRuntimeSelectorAllowed(Method method) {
     if (!YTABRuntimeMethodSupported(method)) return NO;
+    // Main Boolean controls represent zero-argument getters only. Methods
+    // requiring an object or integer context have no global current value.
+    if (method_getNumberOfArguments(method) != 2) return NO;
     const char *name = sel_getName(method_getName(method));
-    if (!name || !*name) return NO;
+    if (!name || !*name || strchr(name, ':')) return NO;
     if (!strncmp(name, "set", 3) || !strncmp(name, "init", 4)) return NO;
     static const char *blocked[] = {
-        "isEqual:", "respondsToSelector:", "conformsToProtocol:",
-        "isKindOfClass:", "isMemberOfClass:"
+        "hash", "retainCount", "isProxy", "isFault", "isFinished",
+        "respondsToSelector", "conformsToProtocol", "isMemberOfClass"
     };
     for (NSUInteger index = 0; index < sizeof(blocked) / sizeof(blocked[0]); index++) {
         if (!strcmp(name, blocked[index])) return NO;
@@ -411,7 +414,10 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImage
             SEL selector = NSSelectorFromString(selectorName);
             Method method = classMethod ? class_getClassMethod(cls, selector)
                                         : class_getInstanceMethod(cls, selector);
-            if (!YTABRuntimeSelectorAllowed(method)) continue;
+            // Historical overrides can include selectors with arguments.
+            // Keep them in Overrides so they can still be reset, while
+            // excluding new argument-taking selectors from All BOOLs.
+            if (!YTABRuntimeMethodSupported(method)) continue;
             YTABRuntimeMethod *entry = [YTABRuntimeMethod new];
             entry.className = className;
             entry.selectorName = selectorName;
@@ -766,14 +772,28 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
 
 - (void)applyFilter {
     NSArray<NSString *> *tokens = YTABRuntimeSearchTokens([self ytab_currentSearchText]);
-    if (!tokens.count) {
-        self.visibleMethods = self.allMethods ?: @[];
-    } else {
-        NSMutableArray *matches = [NSMutableArray array];
-        for (YTABRuntimeMethod *method in self.allMethods) {
+    BOOL searching = tokens.count > 0;
+    BOOL showingOverrides = self.scopeControl.selectedSegmentIndex == 1;
+    NSMutableArray<YTABRuntimeMethod *> *matches = [NSMutableArray array];
+
+    for (YTABRuntimeMethod *method in self.allMethods) {
+        // The default collection must show actual states, not thousands of
+        // unobserved Objective-C selectors. A deliberate search can find a
+        // compatible no-argument getter to explicitly patch or observe.
+        NSNumber *override = YTABRuntimeBrowserOverrideValue(method.patchKey);
+        if (showingOverrides && !override) continue;
+        if (!showingOverrides) {
+            if (!method.configFlag && [method.selectorName containsString:@":"])
+                continue;
+            if (!searching && !method.configFlag && !override &&
+                !YTABRuntimeBrowserNativeSample(method.patchKey))
+                continue;
+        }
+
+        if (searching) {
             NSString *haystack = [NSString stringWithFormat:@"%@ %@ %@ %@",
-                                  method.className, method.selectorName,
-                                  method.typeEncoding, method.patchKey].lowercaseString;
+                method.className, method.selectorName,
+                method.typeEncoding, method.patchKey].lowercaseString;
             BOOL matchesAll = YES;
             for (NSString *token in tokens) {
                 if (![haystack containsString:token]) {
@@ -781,10 +801,11 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
                     break;
                 }
             }
-            if (matchesAll) [matches addObject:method];
+            if (!matchesAll) continue;
         }
-        self.visibleMethods = matches.copy;
+        [matches addObject:method];
     }
+    self.visibleMethods = matches.copy;
     [self.tableView reloadData];
 }
 
