@@ -67,8 +67,6 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 @property(nonatomic, strong) UILabel *ownerLabel;
 @property(nonatomic, strong) UILabel *statusLabel;
 @property(nonatomic, strong) UISwitch *overrideSwitch;
-@property(nonatomic, strong) UILabel *unknownLabel;
-@property(nonatomic, strong) UIButton *modeButton;
 @end
 
 @implementation YTABRuntimePatchCell
@@ -109,42 +107,16 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     [_overrideSwitch setContentHuggingPriority:UILayoutPriorityRequired
                                       forAxis:UILayoutConstraintAxisHorizontal];
 
-    // Do not paint a never-observed System getter as OFF. The receiver and
-    // arguments may be unavailable, and invoking arbitrary getters can
-    // change app state. Render a neutral question mark until it executes.
-    _unknownLabel = [UILabel new];
-    _unknownLabel.text = @"—";
-    _unknownLabel.textAlignment = NSTextAlignmentCenter;
-    _unknownLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
-    _unknownLabel.textColor = UIColor.tertiaryLabelColor;
-    _unknownLabel.accessibilityLabel = @"Native result not observed; use Observe native calls from the context menu";
-    _unknownLabel.hidden = YES;
-
-    _modeButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    if (@available(iOS 26.0, *))
-        _modeButton.configuration = [UIButtonConfiguration glassButtonConfiguration];
-    else if (@available(iOS 15.0, *))
-        _modeButton.configuration = [UIButtonConfiguration tintedButtonConfiguration];
-    _modeButton.showsMenuAsPrimaryAction = YES;
-    _modeButton.accessibilityLabel = @"Choose System, Force OFF or Force ON";
-    _modeButton.titleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
-    [_modeButton setContentHuggingPriority:UILayoutPriorityRequired
-                                  forAxis:UILayoutConstraintAxisHorizontal];
-
-    // Hide the switch without letting UIStackView apply conflicting
-    // "UISV-hiding" zero-width constraints against its intrinsic size.
+    // Every row has a UISwitch. Unknown native state remains explicitly
+    // labeled; the first switch action is a deliberate local Force ON.
     UIView *valueSlot = [UIView new];
     _overrideSwitch.translatesAutoresizingMaskIntoConstraints = NO;
-    _unknownLabel.translatesAutoresizingMaskIntoConstraints = NO;
     [valueSlot addSubview:_overrideSwitch];
-    [valueSlot addSubview:_unknownLabel];
     [NSLayoutConstraint activateConstraints:@[
         [valueSlot.widthAnchor constraintGreaterThanOrEqualToConstant:58],
-        [valueSlot.heightAnchor constraintGreaterThanOrEqualToConstant:32],
+        [valueSlot.heightAnchor constraintGreaterThanOrEqualToConstant:36],
         [_overrideSwitch.centerXAnchor constraintEqualToAnchor:valueSlot.centerXAnchor],
         [_overrideSwitch.centerYAnchor constraintEqualToAnchor:valueSlot.centerYAnchor],
-        [_unknownLabel.centerXAnchor constraintEqualToAnchor:valueSlot.centerXAnchor],
-        [_unknownLabel.centerYAnchor constraintEqualToAnchor:valueSlot.centerYAnchor],
     ]];
 
     UIStackView *headline = [[UIStackView alloc] initWithArrangedSubviews:@[
@@ -154,15 +126,8 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     headline.alignment = UIStackViewAlignmentCenter;
     headline.spacing = 12.0;
 
-    UIStackView *stateRow = [[UIStackView alloc] initWithArrangedSubviews:@[
-        _statusLabel, _modeButton
-    ]];
-    stateRow.axis = UILayoutConstraintAxisHorizontal;
-    stateRow.alignment = UIStackViewAlignmentCenter;
-    stateRow.spacing = 8.0;
-
     UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        headline, _ownerLabel, stateRow
+        headline, _ownerLabel, _statusLabel
     ]];
     stack.axis = UILayoutConstraintAxisVertical;
     stack.spacing = 4.0;
@@ -171,9 +136,8 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     [NSLayoutConstraint activateConstraints:@[
         [stack.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
         [stack.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
-        [stack.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:12],
-        [stack.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-12],
-        [_modeButton.heightAnchor constraintGreaterThanOrEqualToConstant:24],
+        [stack.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:10],
+        [stack.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-10],
     ]];
     return self;
 }
@@ -194,7 +158,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     return [self initWithInitialScope:0];
 }
 - (instancetype)initWithInitialScope:(NSInteger)scope {
-    self = [super initWithStyle:UITableViewStyleInsetGrouped];
+    self = [super initWithStyle:UITableViewStylePlain];
     if (self) _ytab_initialScope = scope == 0 ? 0 : 1;
     return self;
 }
@@ -220,12 +184,24 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     self.navigationItem.titleView = nil;
     self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
     self.tableView.rowHeight = UITableViewAutomaticDimension;
-    self.tableView.estimatedRowHeight = 86.0;
-    self.tableView.backgroundColor = UIColor.systemGroupedBackgroundColor;
+    self.tableView.estimatedRowHeight = 82.0;
+    self.view.backgroundColor = UIColor.systemBackgroundColor;
+    self.tableView.backgroundColor = UIColor.systemBackgroundColor;
     self.tableView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentAutomatic;
     self.tableView.contentInset = UIEdgeInsetsMake(0, 0, 18, 0);
     if (@available(iOS 15.0, *)) self.tableView.sectionHeaderTopPadding = 0;
     self.tableView.separatorInset = UIEdgeInsetsMake(0, 18, 0, 18);
+    self.tableView.separatorColor = UIColor.separatorColor;
+    // This navigation item's transparent appearance replaces the opaque
+    // YouTube-hosted bar strip without changing other Settings controllers.
+    if (@available(iOS 13.0, *)) {
+        UINavigationBarAppearance *clearAppearance = [UINavigationBarAppearance new];
+        [clearAppearance configureWithTransparentBackground];
+        clearAppearance.shadowColor = UIColor.clearColor;
+        self.navigationItem.standardAppearance = clearAppearance;
+        self.navigationItem.scrollEdgeAppearance = clearAppearance;
+        self.navigationItem.compactAppearance = clearAppearance;
+    }
     self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
     self.definesPresentationContext = YES;
     [[NSNotificationCenter defaultCenter] addObserver:self
@@ -270,6 +246,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
         if ([value isKindOfClass:UISegmentedControl.class]) scope = value;
     } @catch (__unused NSException *exception) {}
     [scope removeFromSuperview];
+    scope.backgroundColor = UIColor.clearColor;
     if (scope && self.ytab_initialScope != 0 &&
         scope.selectedSegmentIndex != self.ytab_initialScope) {
         scope.selectedSegmentIndex = self.ytab_initialScope;
@@ -399,6 +376,9 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     if (!cell)
         cell = [[YTABRuntimePatchCell alloc] initWithStyle:UITableViewCellStyleDefault
                                            reuseIdentifier:identifier];
+    cell.backgroundColor = UIColor.clearColor;
+    if (@available(iOS 14.0, *))
+        cell.backgroundConfiguration = [UIBackgroundConfiguration clearConfiguration];
 
     id method = [self ytab_methodAtIndexPath:indexPath];
     NSString *selectorName = YTABModernStringValue(method, @"selectorName");
@@ -442,83 +422,36 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
             effectiveText, nativeText, !installed ? @" · Pending" : @""]
         : (nativeKnown
             ? [NSString stringWithFormat:@"System %@ · No override", nativeText]
-            : @"Not observed · No override");
+            : @"Native not sampled · Switch forces ON");
 
-    [cell.overrideSwitch removeTarget:nil action:NULL forControlEvents:UIControlEventValueChanged];
-    [cell.overrideSwitch setOn:effectiveKnown && effectiveOn animated:NO];
-    cell.overrideSwitch.hidden = !effectiveKnown;
-    cell.unknownLabel.hidden = effectiveKnown;
+    [cell.overrideSwitch removeTarget:nil action:NULL
+                        forControlEvents:UIControlEventValueChanged];
+    [cell.overrideSwitch setOn:(effectiveKnown && effectiveOn) animated:NO];
+    cell.overrideSwitch.hidden = NO;
+    cell.overrideSwitch.enabled = YES;
     cell.overrideSwitch.accessibilityValue = [NSString stringWithFormat:
-        @"Effective %@, %@. Last native %@",
-        effectiveText, hasOverride ? @"override" : @"system", nativeText];
+        @"%@; %@; native %@",
+        effectiveKnown ? (effectiveOn ? @"ON" : @"OFF") : @"not sampled",
+        hasOverride ? @"local override" : @"system", nativeText];
     cell.overrideSwitch.accessibilityHint = nativeKnown
-        ? @"Changing this switch creates a local explicit override. Long press to restore the system state."
-        : @"This getter has not run in YouTube; long press to choose a local override without assuming its native state.";
-    cell.unknownLabel.accessibilityHint =
-        @"The native Objective-C getter has not executed. This is not OFF or evidence of eligibility.";
+        ? @"Change to force a local value. Long press to restore System."
+        : @"Native value not sampled. Switching ON creates a local override; long press for System or Force OFF.";
     objc_setAssociatedObject(cell.overrideSwitch, YTABModernPatchKeyAssociation,
                              key, OBJC_ASSOCIATION_COPY_NONATOMIC);
     [cell.overrideSwitch addTarget:self action:@selector(overrideSwitchChanged:)
                   forControlEvents:UIControlEventValueChanged];
-
-    // Native iOS context menu also works when long-pressing the switch.
     if (@available(iOS 13.0, *)) {
         BOOL attached = NO;
         for (id interaction in cell.overrideSwitch.interactions)
-            if ([interaction isKindOfClass:[UIContextMenuInteraction class]]) attached = YES;
+            if ([interaction isKindOfClass:UIContextMenuInteraction.class]) attached = YES;
         if (!attached)
             [cell.overrideSwitch addInteraction:
                 [[UIContextMenuInteraction alloc] initWithDelegate:self]];
     }
-
-    // Keep the per-row menu only for explicit overrides or unknown native state.
-    // Keep actions immediately available for overrides and unsampled getters.
-    // Every row also has a native long-press tri-state context menu.
-    cell.modeButton.hidden = (mode == YTABModernPatchModeSystem && nativeKnown);
-    NSString *modeLabel = mode == YTABModernPatchModeSystem ? @"Set…"
-        : (mode == YTABModernPatchModeForceOn ? @"Override ON" : @"Override OFF");
-    UIButtonConfiguration *configuration = cell.modeButton.configuration;
-    if (configuration) {
-        configuration.title = modeLabel;
-        configuration.contentInsets = NSDirectionalEdgeInsetsMake(2, 8, 2, 8);
-        configuration.titleTextAttributesTransformer =
-            ^NSDictionary<NSAttributedStringKey, id> *
-                (NSDictionary<NSAttributedStringKey, id> *incoming) {
-            NSMutableDictionary<NSAttributedStringKey, id> *attributes = [incoming mutableCopy];
-            attributes[NSFontAttributeName] =
-                [[UIFontMetrics metricsForTextStyle:UIFontTextStyleCaption1]
-                    scaledFontForFont:[UIFont systemFontOfSize:11.5 weight:UIFontWeightMedium]];
-            return attributes;
-        };
-        cell.modeButton.configuration = configuration;
-    } else {
-        [cell.modeButton setTitle:modeLabel forState:UIControlStateNormal];
-    }
-    cell.modeButton.menu = [self ytab_modeMenuForKey:key];
-    cell.modeButton.accessibilityValue = modeLabel;
-    cell.accessibilityLabel = [NSString stringWithFormat:@"%@, %@, native %@",
-                               selectorName, modeLabel, nativeText];
-    cell.accessibilityHint = @"Tap for details. Long press to set or restore the local override; System uses the original native value.";
+    cell.accessibilityLabel = [NSString stringWithFormat:@"%@; %@; native %@",
+        selectorName, hasOverride ? @"override" : @"System", nativeText];
+    cell.accessibilityHint = @"Tap for details or long press for System, Force ON and Force OFF.";
     return cell;
-}
-
-- (UIMenu *)ytab_modeMenuForKey:(NSString *)key {
-    __weak typeof(self) weakSelf = self;
-    YTABModernPatchMode current = YTABModernModeForKey(key);
-    NSMutableArray<UIMenuElement *> *actions = [NSMutableArray array];
-    NSArray<NSString *> *titles = @[@"System", @"Force OFF", @"Force ON"];
-    for (NSInteger index = 0; index < 3; index++) {
-        YTABModernPatchMode chosen = (YTABModernPatchMode)index;
-        UIAction *action = [UIAction actionWithTitle:titles[(NSUInteger)index]
-                                             image:nil
-                                        identifier:nil
-                                           handler:^(__unused UIAction *ignored) {
-            [weakSelf ytab_applyMode:chosen patchKey:key];
-        }];
-        action.state = chosen == current ? UIMenuElementStateOn : UIMenuElementStateOff;
-        [actions addObject:action];
-    }
-    return [UIMenu menuWithTitle:@"Runtime override" children:actions];
 }
 
 // Long press on the native table row OR its switch shows a UIKit context
