@@ -70,9 +70,13 @@ static NSString *YTABCReadTitle(id obj) {
 - (instancetype)initWithSettingsOwner:(id)owner {
     self = [super initWithStyle:UITableViewStyleInsetGrouped];
     if (!self) return nil;
-    self.title = @"Native Settings Rows";
+    self.title = @"Settings Sections";
     self.tableView.rowHeight = UITableViewAutomaticDimension;
-    self.tableView.estimatedRowHeight = 54;
+    self.tableView.estimatedRowHeight = 62;
+    self.tableView.backgroundColor = UIColor.systemGroupedBackgroundColor;
+    self.tableView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentAutomatic;
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
+    if (@available(iOS 15.0, *)) self.tableView.sectionHeaderTopPadding = 8;
 
     _settingsOwner = owner;
     _originalHidden = [NSMutableDictionary dictionary];
@@ -264,7 +268,11 @@ static NSString *YTABCReadTitle(id obj) {
     if (!self) return nil;
     self.title = category[@"title"] ?: @"Native Rows";
     self.tableView.rowHeight = UITableViewAutomaticDimension;
-    self.tableView.estimatedRowHeight = 56;
+    self.tableView.estimatedRowHeight = 62;
+    self.tableView.backgroundColor = UIColor.systemGroupedBackgroundColor;
+    self.tableView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentAutomatic;
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
+    if (@available(iOS 15.0, *)) self.tableView.sectionHeaderTopPadding = 8;
     id section = category[@"section"];
     if (section == NSNull.null) section = nil;
     id nativeItems = YTABCSafeObject(section, "items");
@@ -308,13 +316,22 @@ static NSString *YTABCReadTitle(id obj) {
     NSDictionary *entry = [self ytabc_entriesInSection:indexPath.section][(NSUInteger)indexPath.row];
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     cell.textLabel.text = entry[@"title"];
-    cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+    cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    cell.textLabel.adjustsFontForContentSizeCategory = YES;
     cell.textLabel.numberOfLines = 2;
     cell.detailTextLabel.text = entry[@"subtitle"];
-    cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
+    cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    cell.detailTextLabel.adjustsFontForContentSizeCategory = YES;
     cell.detailTextLabel.numberOfLines = 3;
-    cell.accessoryType = self.details || ![entry[@"loaded"] boolValue]
+    BOOL loaded = [entry[@"loaded"] boolValue];
+    cell.accessoryType = self.details || !loaded
         ? UITableViewCellAccessoryNone : UITableViewCellAccessoryDisclosureIndicator;
+    if (!self.details && !loaded) {
+        cell.textLabel.textColor = UIColor.secondaryLabelColor;
+        cell.detailTextLabel.textColor = UIColor.tertiaryLabelColor;
+        cell.imageView.image = [UIImage systemImageNamed:@"questionmark.circle"];
+        cell.imageView.tintColor = UIColor.tertiaryLabelColor;
+    }
     if (!self.details && [entry[@"loaded"] boolValue] &&
         [entry[@"hiddenKnown"] boolValue] && [entry[@"itemCount"] unsignedIntegerValue] > 0) {
         BOOL modified = [entry[@"localOverride"] boolValue];
