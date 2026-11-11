@@ -163,7 +163,7 @@ legitimate launchers.
   PoomSmart 1.9.2. Runtime behavior is not gated by a catalog version or by
   hard-coded expected counts.
 - Uses the established `com.ps.ytabconfig` package identity and existing
-  `YTABC` preferences, so this 2.0.0 fork release upgrades without discarding
+  `YTABC` preferences, so this 2.0.1 fork release upgrades without discarding
   existing choices.
 - Apply changes only when you understand the setting; reset and restart
   YouTube to return to the app's normal behavior.
@@ -405,7 +405,7 @@ validation. Theos files: `YTABCNativeMenus.m`, `YTABCNativeMenus.h`,
 
 ## Sideload packaging
 
-For Feather, use `YTABConfig_2.0.0_feather.deb` with the default
+For Feather, use `YTABConfig_2.0.1_feather.deb` with the default
 `@executable_path` + `Frameworks` injection options. Its archive uses
 `data.tar.xz`, its rootless paths are recognized by Feather's deb importer, and
 the contained dylib identifies itself as
@@ -420,7 +420,7 @@ the new deb was selected. The supplied black-screen fixture had both that old
 file and an existing
 `@executable_path/Frameworks/YTABConfig.dylib` load command. Reusing it as the
 input therefore does not test this build. Use a clean copy of the same YouTube
-version, then add only `YTABConfig_2.0.0_feather.deb`; do not also add the
+version, then add only `YTABConfig_2.0.1_feather.deb`; do not also add the
 rootless deb, standalone injector, or an older YTABConfig dylib.
 
 The recommended layout ZIP is ready to unpack into `YouTube.app/`:
