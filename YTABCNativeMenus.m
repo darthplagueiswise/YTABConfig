@@ -272,15 +272,15 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
                 @{@"title": @"Clear native experiment caches",
                   @"subtitle": @"Use clearCaches on the observed experiment service",
                   @"kind": @"experimentsClearCaches"},
-                @{@"title": @"Open captured config flags",
-                  @"subtitle": @"Original YTGlobalConfig / YTColdConfig / YTHotConfig BOOLs and current overrides",
+                @{@"title": @"ColdConfig Boolean flags",
+                  @"subtitle": @"Open native ColdConfig flags; switch to HotConfig or GlobalConfig using category chips",
                   @"kind": @"configFlags"},
                 @{@"title": @"YouTube config inventory",
                   @"subtitle": @"Cold, Hot, Global and flag-ID infrastructure (read only)",
                   @"kind": @"config"},
-                @{@"title": @"Active runtime overrides",
-                  @"subtitle": @"Review and remove currently stored local method overrides",
-                  @"kind": @"runtimeOverrides"}
+                @{@"title": @"Phenotype Boolean flags",
+                  @"subtitle": @"Filter native Phenotype classes and their Boolean flag getters",
+                  @"kind": @"runtimePhenotype"}
             ]
         },
         @{
@@ -709,15 +709,15 @@ static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
         [self pushNativeController:entry[@"class"]];
     } else if ([kind isEqualToString:@"configFlags"]) {
         [self.navigationController pushViewController:
-            [[YTABRuntimeBrowserModernViewController alloc] initWithInitialScope:0]
+            [[YTABRuntimeBrowserModernViewController alloc] initWithCategory:@"ColdConfig"]
             animated:YES];
     } else if ([kind isEqualToString:@"runtimeControls"]) {
         [self.navigationController pushViewController:
             [[YTABRuntimeBrowserModernViewController alloc] initWithInitialScope:0]
             animated:YES];
-    } else if ([kind isEqualToString:@"runtimeOverrides"]) {
+    } else if ([kind isEqualToString:@"runtimePhenotype"]) {
         [self.navigationController pushViewController:
-            [[YTABRuntimeBrowserModernViewController alloc] initWithInitialScope:1]
+            [[YTABRuntimeBrowserModernViewController alloc] initWithCategory:@"Phenotype"]
             animated:YES];
     } else if ([kind isEqualToString:@"settingsHidden"]) {
         [self.navigationController pushViewController:
