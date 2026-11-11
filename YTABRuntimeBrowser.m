@@ -488,6 +488,22 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImage
             }
             if (methods) free(methods);
         }
+        // Show useful results immediately, without waiting for an entire
+        // image-wide Objective-C class scan. Snapshot at bounded intervals;
+        // the final sorted catalogue still replaces this partial view.
+        if (scope == YTABRuntimeImageScopeMethods && results.count &&
+            (scannedClasses == 300 || (scannedClasses % 1200) == 0)) {
+            NSArray<YTABRuntimeMethod *> *snapshot = results.copy;
+            NSUInteger done = scannedClasses;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [[NSNotificationCenter defaultCenter]
+                    postNotificationName:YTABRuntimeInventoryProgressNotification
+                    object:nil
+                    userInfo:@{@"done": @(done),
+                               @"total": @(totalClasses),
+                               @"partialMethods": snapshot}];
+            });
+        }
     }
     [results sortUsingComparator:^NSComparisonResult(YTABRuntimeMethod *a,
                                                        YTABRuntimeMethod *b) {
@@ -654,8 +670,15 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
     NSUInteger done = [notification.userInfo[@"done"] unsignedIntegerValue];
     NSUInteger total = [notification.userInfo[@"total"] unsignedIntegerValue];
     if (total) self.scanProgressLabel.text = [NSString stringWithFormat:
-        @"Indexing native methods: %lu / %lu classes. Search will be ready when indexing completes.",
+        @"Native methods: %lu / %lu classes indexed",
         (unsigned long)done, (unsigned long)total];
+    NSArray *partial = notification.userInfo[@"partialMethods"];
+    if ([partial isKindOfClass:NSArray.class] && partial.count) {
+        self.allMethods = partial;
+        [self applyFilter];
+        // The spinner remains visible for progress only until completion.
+        // Rows themselves are interactive during the ongoing scan.
+    }
 }
 
 - (void)dealloc {
