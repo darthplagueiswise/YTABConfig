@@ -204,7 +204,10 @@ require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserNativeSample"
 # The UI must not turn a missing native sample into a fake System OFF state.
 require_text YTABRuntimeBrowserModern.m "cell.overrideSwitch.hidden = NO;"
 require_text YTABRuntimeBrowserModern.m "cell.overrideSwitch.enabled = YES;"
-require_text YTABRuntimeBrowserModern.m "[valueSlot addSubview:_overrideSwitch]"
+require_text YTABRuntimeBrowserModern.m '[_overrideSwitch.trailingAnchor'
+require_text YTABRuntimeBrowserModern.m 'constraintEqualToAnchor:self.contentView.trailingAnchor constant:-20'
+require_text YTABRuntimeBrowserModern.m '[_overrideSwitch.topAnchor'
+reject_text YTABRuntimeBrowserModern.m "UIStackView *headline"
 reject_text YTABRuntimeBrowserModern.m "_unknownLabel"
 reject_text YTABRuntimeBrowserModern.m "cell.modeButton"
 reject_text YTABRuntimeBrowserModern.m '@"Set…"'
@@ -235,7 +238,20 @@ require_text YTABRuntimeBrowserModern.m "UITableViewAutomaticDimension"
 require_text YTABRuntimeBrowser.m "method_getNumberOfArguments(method) != 2"
 require_text YTABRuntimeBrowser.m "strchr(name, ':')"
 require_text YTABRuntimeBrowser.m "BOOL searching = tokens.count > 0"
-require_text YTABRuntimeBrowser.m "if (!searching && !method.configFlag && !override &&"
+require_text YTABRuntimeBrowser.m 'if (!searching && [selectedCategory isEqualToString:@"Runtime"]'
+require_text YTABRuntimeBrowser.m '[overridden addObjectsFromArray:unmodified]'
+require_text YTABRuntimeBrowser.m 'YTABRuntimeFamilyForClassName'
+require_text YTABRuntimeBrowser.m '@"Runtime", @"Phenotype", @"ColdConfig", @"HotConfig", @"GlobalConfig"'
+require_text YTABRuntimeBrowser.m '- (void)ytab_setCategoryFilter:(NSString *)category'
+require_text YTABRuntimeBrowser.m '- (NSArray<NSString *> *)ytab_availableCategories'
+require_text YTABRuntimeBrowserModern.m 'clearGlassButtonConfiguration'
+require_text YTABRuntimeBrowserModern.m 'glassButtonConfiguration'
+require_text YTABRuntimeBrowserModern.m 'scroll.showsHorizontalScrollIndicator = NO'
+require_text YTABRuntimeBrowserModern.m 'header.backgroundColor = UIColor.clearColor'
+require_text YTABRuntimeBrowserModern.m 'ytab_categoryTapped:'
+require_text YTABRuntimeBrowserModern.m '[self ytab_setCategoryFilter:category]'
+reject_text YTABRuntimeBrowserModern.m '[header addSubview:scope]'
+reject_text YTABRuntimeBrowserModern.m 'scope.backgroundColor = UIColor.clearColor'
 require_text YTABRuntimeBrowser.m "YTABRuntimeBrowserNativeSample(method.patchKey)"
 
 require_text YTABRuntimeBrowserModern.m "NSLineBreakByTruncatingMiddle"
