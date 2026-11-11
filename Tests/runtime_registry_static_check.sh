@@ -143,11 +143,14 @@ require_text YTABRuntimeBrowser.m "MSHookMessageEx(hookClass, selector, replacem
 require_text YTABRuntimeBrowser.m "YTABCRuntimeBrowserOverrides"
 require_text YTABRuntimeBrowser.m "YTABRuntimeArgumentKindObject"
 require_text YTABRuntimeBrowser.m "YTABRuntimeArgumentKindInteger"
-# Exactly known capture-backed config flags are separated from methods.
+# All captured config flags and compatible native BOOLs share one UI collection.
 require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeFlags"
 require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeMethods"
 require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeOverrides"
-require_text YTABRuntimeBrowser.m '@"Flags", @"Methods", @"Overrides"'
+require_text YTABRuntimeBrowser.m '@"All BOOLs", @"Overrides"'
+reject_text YTABRuntimeBrowser.m '@"Flags", @"Methods", @"Overrides"'
+require_text YTABRuntimeBrowser.m 'YTABRuntimeImageScopeAll'
+require_text YTABRuntimeBrowser.m 'YTABRuntimeImageScopeAll : YTABRuntimeImageScopeOverrides'
 require_text YTABRuntimeBrowser.m "YTABCRuntimeValuesSnapshot()"
 require_text YTABRuntimeBrowser.m "YTABCNativeValue(cls, selector)"
 require_text YTABRuntimeBrowser.m "YTABCOverrideValue(cls, selector)"
@@ -173,7 +176,7 @@ reject_text YTABRuntimeBrowserHooks.x "MSHookMessageEx"
 require_text YTABRuntimeBrowserModern.m "UINavigationItemLargeTitleDisplayModeNever"
 # Keep a native UISearchBar pinned in a plain table section header.
 # The old search in YouTube's navigation container vanished on scrolling.
-require_text YTABRuntimeBrowserModern.m "UITableViewStylePlain"
+require_text YTABRuntimeBrowserModern.m "UITableViewStyleInsetGrouped"
 require_text YTABRuntimeBrowserModern.m "viewForHeaderInSection:"
 # The visible pinned UISearchBar must be independent of UISearchController
 # and supply the actual query to the engine.
@@ -237,7 +240,14 @@ require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserReinstallPersistedHoo
 require_text YTABRuntimeBrowserModern.m "Explanations belong in detail views"
 require_text YTABRuntimeBrowserModern.m "UINavigationItemSearchBarPlacementIntegratedButton"
 require_text YTABRuntimeBrowser.m "objc_copyClassNamesForImage"
-require_text YTABRuntimeBrowser.m "sYTABRuntimeMethodCatalog = complete"
+require_text YTABRuntimeBrowser.m "sYTABRuntimeMethodCatalog = generic.copy"
+require_text YTABRuntimeBrowser.m '"partialMethods": snapshot'
+require_text YTABRuntimeBrowser.m 'if (override) return override.boolValue;'
+override_short_circuits="$(grep -Fc 'if (override) return override.boolValue;' YTABRuntimeBrowser.m)"
+if [[ "$override_short_circuits" -ne 3 ]]; then
+    echo "all three generic BOOL hook signatures must short-circuit local overrides" >&2
+    exit 1
+fi
 require_text YTABRuntimeBrowser.m "YTABRuntimeInventoryQueue()"
 reject_text YTABRuntimeBrowserModern.m "UIAlertControllerStyleActionSheet"
 
