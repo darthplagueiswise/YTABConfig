@@ -176,7 +176,8 @@ reject_text YTABRuntimeBrowserHooks.x "MSHookMessageEx"
 require_text YTABRuntimeBrowserModern.m "UINavigationItemLargeTitleDisplayModeNever"
 # Keep a native UISearchBar pinned in a plain table section header.
 # The old search in YouTube's navigation container vanished on scrolling.
-require_text YTABRuntimeBrowserModern.m "UITableViewStyleInsetGrouped"
+require_text YTABRuntimeBrowserModern.m "UITableViewStylePlain"
+reject_text YTABRuntimeBrowserModern.m "UITableViewStyleInsetGrouped"
 require_text YTABRuntimeBrowserModern.m "viewForHeaderInSection:"
 # The visible pinned UISearchBar must be independent of UISearchController
 # and supply the actual query to the engine.
@@ -201,11 +202,17 @@ require_text YTABRuntimeBrowserModern.m "searchBar:(UISearchBar *)searchBar text
 require_text YTABRuntimeBrowserModern.m "self.tableView.tableHeaderView = nil;"
 require_text YTABRuntimeBrowserModern.m "YTABRuntimeBrowserNativeSample"
 # The UI must not turn a missing native sample into a fake System OFF state.
-require_text YTABRuntimeBrowserModern.m "cell.overrideSwitch.hidden = !effectiveKnown;"
-require_text YTABRuntimeBrowserModern.m "cell.unknownLabel.hidden = effectiveKnown;"
+require_text YTABRuntimeBrowserModern.m "cell.overrideSwitch.hidden = NO;"
+require_text YTABRuntimeBrowserModern.m "cell.overrideSwitch.enabled = YES;"
 require_text YTABRuntimeBrowserModern.m "[valueSlot addSubview:_overrideSwitch]"
-require_text YTABRuntimeBrowserModern.m "[valueSlot addSubview:_unknownLabel]"
-reject_text YTABRuntimeBrowserModern.m "_unknownLabel.widthAnchor constraintEqualToConstant:49"
+reject_text YTABRuntimeBrowserModern.m "_unknownLabel"
+reject_text YTABRuntimeBrowserModern.m "cell.modeButton"
+reject_text YTABRuntimeBrowserModern.m '@"Set…"'
+require_text YTABRuntimeBrowserModern.m "UIColor.systemBackgroundColor"
+reject_text YTABRuntimeBrowserModern.m "UIColor.systemGroupedBackgroundColor"
+require_text YTABRuntimeBrowserModern.m "configureWithTransparentBackground"
+require_text YTABRuntimeBrowserModern.m "self.navigationItem.standardAppearance = clearAppearance"
+require_text YTABRuntimeBrowserModern.m "self.navigationItem.scrollEdgeAppearance = clearAppearance"
 require_text YTABRuntimeBrowserModern.m "UIColor.systemGreenColor"
 require_text YTABRuntimeBrowserModern.m "UIColor.systemBlueColor"
 require_text YTABRuntimeBrowserModern.m "mode == YTABModernPatchModeSystem"
@@ -225,13 +232,19 @@ require_text YTABRuntimeBrowser.m "BOOL YTABRuntimeBrowserApplyMode"
 require_text YTABRuntimeBrowserModern.m "Patch unavailable"
 require_text YTABRuntimeBrowserModern.m "Effective %@"
 require_text YTABRuntimeBrowserModern.m "UITableViewAutomaticDimension"
+require_text YTABRuntimeBrowser.m "method_getNumberOfArguments(method) != 2"
+require_text YTABRuntimeBrowser.m "strchr(name, ':')"
+require_text YTABRuntimeBrowser.m "BOOL searching = tokens.count > 0"
+require_text YTABRuntimeBrowser.m "if (!searching && !method.configFlag && !override &&"
+require_text YTABRuntimeBrowser.m "YTABRuntimeBrowserNativeSample(method.patchKey)"
+
 require_text YTABRuntimeBrowserModern.m "NSLineBreakByTruncatingMiddle"
-require_text YTABRuntimeBrowserModern.m "glassButtonConfiguration"
-require_text YTABRuntimeBrowserModern.m "UIButtonConfiguration"
 require_text YTABRuntimeBrowserModern.m "UISwitch *overrideSwitch"
 require_text YTABRuntimeBrowserModern.m "overrideSwitchChanged:"
-require_text YTABRuntimeBrowserModern.m "ytab_modeMenuForKey:"
-require_text YTABRuntimeBrowserModern.m 'NSArray<NSString *> *titles = @[@"System", @"Force OFF", @"Force ON"]'
+require_text YTABRuntimeBrowserModern.m "ytab_contextMenuForKey:"
+require_text YTABRuntimeBrowserModern.m "Remove override (System)"
+require_text YTABRuntimeBrowserModern.m '@"Force OFF"'
+require_text YTABRuntimeBrowserModern.m '@"Force ON"'
 require_text YTABRuntimeBrowserModern.m "UIFontTextStyleBody"
 require_text YTABRuntimeBrowserModern.m "UIFontTextStyleCaption2"
 reject_text YTABRuntimeBrowserModern.m "monospacedSystemFontOfSize:15.0"
