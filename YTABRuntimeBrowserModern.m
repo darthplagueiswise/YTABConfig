@@ -174,6 +174,12 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     return self;
 }
 
+- (instancetype)initWithCategory:(NSString *)category {
+    self = [self initWithInitialScope:0];
+    if (self && category.length) _selectedCategory = category.copy;
+    return self;
+}
+
 - (NSArray *)ytab_visibleMethods {
     @try {
         id value = [self valueForKey:@"visibleMethods"];
@@ -296,6 +302,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     self.categoryScroller = scroll;
     self.categoryStack = categories;
     self.scopeHeaderView = header;
+    [self ytab_setCategoryFilter:self.selectedCategory];
     [self ytab_refreshCategoryChips];
     // Do not set tableHeaderView: it would scroll the search out of sight.
     self.tableView.tableHeaderView = nil;
