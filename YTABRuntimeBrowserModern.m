@@ -107,37 +107,39 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     [_overrideSwitch setContentHuggingPriority:UILayoutPriorityRequired
                                       forAxis:UILayoutConstraintAxisHorizontal];
 
-    // Every row has a UISwitch. Unknown native state remains explicitly
-    // labeled; the first switch action is a deliberate local Force ON.
-    UIView *valueSlot = [UIView new];
-    _overrideSwitch.translatesAutoresizingMaskIntoConstraints = NO;
-    [valueSlot addSubview:_overrideSwitch];
+    // Pin every UISwitch to one fixed trailing edge and one fixed top
+    // inset. A long selector only changes its own label height; it can
+    // never push the switch left or right.
+    for (UIView *view in @[_selectorLabel, _ownerLabel,
+                            _statusLabel, _overrideSwitch]) {
+        view.translatesAutoresizingMaskIntoConstraints = NO;
+        [self.contentView addSubview:view];
+    }
     [NSLayoutConstraint activateConstraints:@[
-        [valueSlot.widthAnchor constraintGreaterThanOrEqualToConstant:58],
-        [valueSlot.heightAnchor constraintGreaterThanOrEqualToConstant:36],
-        [_overrideSwitch.centerXAnchor constraintEqualToAnchor:valueSlot.centerXAnchor],
-        [_overrideSwitch.centerYAnchor constraintEqualToAnchor:valueSlot.centerYAnchor],
-    ]];
-
-    UIStackView *headline = [[UIStackView alloc] initWithArrangedSubviews:@[
-        _selectorLabel, valueSlot
-    ]];
-    headline.axis = UILayoutConstraintAxisHorizontal;
-    headline.alignment = UIStackViewAlignmentCenter;
-    headline.spacing = 12.0;
-
-    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        headline, _ownerLabel, _statusLabel
-    ]];
-    stack.axis = UILayoutConstraintAxisVertical;
-    stack.spacing = 4.0;
-    stack.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.contentView addSubview:stack];
-    [NSLayoutConstraint activateConstraints:@[
-        [stack.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
-        [stack.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
-        [stack.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:10],
-        [stack.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-10],
+        [_overrideSwitch.trailingAnchor
+            constraintEqualToAnchor:self.contentView.trailingAnchor constant:-20],
+        [_overrideSwitch.topAnchor
+            constraintEqualToAnchor:self.contentView.topAnchor constant:12],
+        [_selectorLabel.leadingAnchor
+            constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
+        [_selectorLabel.trailingAnchor
+            constraintLessThanOrEqualToAnchor:_overrideSwitch.leadingAnchor constant:-12],
+        [_selectorLabel.topAnchor
+            constraintEqualToAnchor:self.contentView.topAnchor constant:12],
+        [_ownerLabel.leadingAnchor
+            constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
+        [_ownerLabel.trailingAnchor
+            constraintEqualToAnchor:self.contentView.trailingAnchor constant:-20],
+        [_ownerLabel.topAnchor
+            constraintEqualToAnchor:_selectorLabel.bottomAnchor constant:8],
+        [_statusLabel.leadingAnchor
+            constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
+        [_statusLabel.trailingAnchor
+            constraintEqualToAnchor:self.contentView.trailingAnchor constant:-20],
+        [_statusLabel.topAnchor
+            constraintEqualToAnchor:_ownerLabel.bottomAnchor constant:4],
+        [_statusLabel.bottomAnchor
+            constraintEqualToAnchor:self.contentView.bottomAnchor constant:-12],
     ]];
     return self;
 }
@@ -152,8 +154,8 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 
 @implementation YTABRuntimeBrowserModernViewController
 
-// Native inset grouped sections preserve iOS 26/27 rounded surfaces and
-// adaptive spacing. Search lives in UINavigationItem (not the bottom toolbar).
+// Plain rows and a transparent category scroller preserve true native
+// controls. UIKit owns glass button appearance and navigation edge effects.
 - (instancetype)init {
     return [self initWithInitialScope:0];
 }
