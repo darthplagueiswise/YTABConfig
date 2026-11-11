@@ -145,30 +145,29 @@ static NSString *YTABCReadTitle(id obj) {
             @"itemCount": @(count), @"localOverride": @(changedHere),
             @"owner": owner ?: NSNull.null}];
     }
-    // Categories 30/37 are the user's primary inspection targets.
-    // Group by the *actual loaded state* instead of mixing unavailable
-    // declarations among the actionable section controllers.
-    NSMutableArray *priority = [NSMutableArray array];
+    // Every loaded hidden section is actionable, not just one chosen ID.
+    // Categories 30 and 37 are examples, never special eligibility targets.
+    NSMutableArray *hidden = [NSMutableArray array];
     NSMutableArray *available = [NSMutableArray array];
     NSMutableArray *unavailable = [NSMutableArray array];
     for (NSDictionary *entry in rows) {
-        NSUInteger category = [entry[@"category"] unsignedIntegerValue];
-        if (category == 30 || category == 37) [priority addObject:entry];
-        else if ([entry[@"loaded"] boolValue]) [available addObject:entry];
-        else [unavailable addObject:entry];
+        if (![entry[@"loaded"] boolValue]) [unavailable addObject:entry];
+        else if ([entry[@"hidden"] boolValue] ||
+                 [entry[@"localOverride"] boolValue]) [hidden addObject:entry];
+        else [available addObject:entry];
     }
     NSMutableArray *groups = [NSMutableArray array], *titles = [NSMutableArray array];
-    if (priority.count) {
-        [groups addObject:priority.copy];
-        [titles addObject:@"Navigation categories · 30 / 37"];
+    if (hidden.count) {
+        [groups addObject:hidden.copy];
+        [titles addObject:@"Hidden / locally modified"];
     }
     if (available.count) {
         [groups addObject:available.copy];
-        [titles addObject:@"Loaded native sections"];
+        [titles addObject:@"Other loaded sections"];
     }
     if (unavailable.count) {
         [groups addObject:unavailable.copy];
-        [titles addObject:@"Declared but not loaded"];
+        [titles addObject:@"Declared without loaded rows"];
     }
     self.rows = rows.copy;
     self.groupedRows = groups.copy;
