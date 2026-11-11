@@ -80,11 +80,11 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     // The selector is content, not a headline. Avoid fixed 15pt monospaced
     // fonts and long technical type encodings in the primary row.
     _selectorLabel = [UILabel new];
-    _selectorLabel.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleSubheadline]
-        scaledFontForFont:[UIFont systemFontOfSize:13.0 weight:UIFontWeightMedium]];
+    _selectorLabel.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleBody]
+        scaledFontForFont:[UIFont systemFontOfSize:15.0 weight:UIFontWeightSemibold]];
     _selectorLabel.adjustsFontForContentSizeCategory = YES;
     _selectorLabel.numberOfLines = 3;
-    _selectorLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    _selectorLabel.lineBreakMode = NSLineBreakByWordWrapping;
     [_selectorLabel setContentCompressionResistancePriority:UILayoutPriorityDefaultLow
                                                    forAxis:UILayoutConstraintAxisHorizontal];
 
@@ -165,14 +165,14 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
         headline, _ownerLabel, stateRow
     ]];
     stack.axis = UILayoutConstraintAxisVertical;
-    stack.spacing = 2.0;
+    stack.spacing = 4.0;
     stack.translatesAutoresizingMaskIntoConstraints = NO;
     [self.contentView addSubview:stack];
     [NSLayoutConstraint activateConstraints:@[
         [stack.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
         [stack.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
-        [stack.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:6],
-        [stack.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-6],
+        [stack.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:12],
+        [stack.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-12],
         [_modeButton.heightAnchor constraintGreaterThanOrEqualToConstant:24],
     ]];
     return self;
@@ -188,15 +188,14 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 
 @implementation YTABRuntimeBrowserModernViewController
 
-// Plain tables keep the section header pinned when the method list scrolls.
-// Inset-grouped headers and iOS 26's automatic toolbar search can disappear
-// behind YouTube's custom settings navigation container.
+// Native inset grouped sections preserve iOS 26/27 rounded surfaces and
+// adaptive spacing. Search lives in UINavigationItem (not the bottom toolbar).
 - (instancetype)init {
     return [self initWithInitialScope:0];
 }
 - (instancetype)initWithInitialScope:(NSInteger)scope {
-    self = [super initWithStyle:UITableViewStylePlain];
-    if (self) _ytab_initialScope = MAX(0, MIN(2, scope));
+    self = [super initWithStyle:UITableViewStyleInsetGrouped];
+    if (self) _ytab_initialScope = scope == 0 ? 0 : 1;
     return self;
 }
 
@@ -217,15 +216,16 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"Runtime Patches";
+    self.title = @"Boolean Controls";
     self.navigationItem.titleView = nil;
     self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
     self.tableView.rowHeight = UITableViewAutomaticDimension;
-    self.tableView.estimatedRowHeight = 74.0;
+    self.tableView.estimatedRowHeight = 86.0;
+    self.tableView.backgroundColor = UIColor.systemGroupedBackgroundColor;
     self.tableView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentAutomatic;
     self.tableView.contentInset = UIEdgeInsetsMake(0, 0, 18, 0);
     if (@available(iOS 15.0, *)) self.tableView.sectionHeaderTopPadding = 0;
-    self.tableView.separatorInset = UIEdgeInsetsMake(0, 16, 0, 16);
+    self.tableView.separatorInset = UIEdgeInsetsMake(0, 18, 0, 18);
     self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
     self.definesPresentationContext = YES;
     [[NSNotificationCenter defaultCenter] addObserver:self
@@ -276,7 +276,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
         [self scopeChanged:scope];
     }
 
-    CGFloat headerHeight = self.usesNativeSearchPlacement ? 46.0 : 98.0;
+    CGFloat headerHeight = self.usesNativeSearchPlacement ? 52.0 : 104.0;
     UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, headerHeight)];
     header.backgroundColor = [UIColor clearColor];
     if (self.pinnedSearchBar) [header addSubview:self.pinnedSearchBar];
@@ -335,7 +335,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     if (!header) return;
     CGFloat width = CGRectGetWidth(self.tableView.bounds);
     CGFloat searchHeight = self.usesNativeSearchPlacement ? 0.0 : 52.0;
-    header.frame = CGRectMake(0, 0, width, searchHeight + 46.0);
+    header.frame = CGRectMake(0, 0, width, searchHeight + 52.0);
     if (self.pinnedSearchBar)
         self.pinnedSearchBar.frame = CGRectMake(8, 0, MAX(0, width - 16), 52);
     UISegmentedControl *scope = nil;
@@ -343,7 +343,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
         id value = [self valueForKey:@"scopeControl"];
         if ([value isKindOfClass:UISegmentedControl.class]) scope = value;
     } @catch (__unused NSException *exception) {}
-    scope.frame = CGRectMake(16, searchHeight + 7, MAX(0, width - 32), 34);
+    scope.frame = CGRectMake(20, searchHeight + 8, MAX(0, width - 40), 36);
 }
 
 - (NSString *)ytab_currentSearchText {
@@ -372,7 +372,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
     (void)tableView; (void)section;
-    return self.usesNativeSearchPlacement ? 46.0 : 98.0;
+    return self.usesNativeSearchPlacement ? 52.0 : 104.0;
 }
 
 - (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
@@ -471,7 +471,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
                 [[UIContextMenuInteraction alloc] initWithDelegate:self]];
     }
 
-    // Avoid a repeated "System" glass pill on every original/native row.
+    // Keep the per-row menu only for explicit overrides or unknown native state.
     // Keep actions immediately available for overrides and unsampled getters.
     // Every row also has a native long-press tri-state context menu.
     cell.modeButton.hidden = (mode == YTABModernPatchModeSystem && nativeKnown);
