@@ -14,10 +14,10 @@ require_text() {
 
 require_text control "Package: com.ps.ytabconfig"
 require_text control "Name: YTABConfig Feature Lab"
-require_text control "Version: 2.0.3"
+require_text control "Version: 2.0.4"
 require_text control "Maintainer: Afterglow Labs"
 require_text control "Homepage: https://github.com/afterglow-labs/YTABConfig"
-require_text Makefile "PACKAGE_VERSION = 2.0.3"
+require_text Makefile "PACKAGE_VERSION = 2.0.4"
 require_text build.sh '	export THEOS_PACKAGE_SCHEME=rootless'
 require_text build.sh 'SIDELOAD_ROOT_ID="@executable_path/${APP_NAME}.dylib"'
 require_text build.sh 'SIDELOAD_FRAMEWORKS_ID="@executable_path/Frameworks/${APP_NAME}.dylib"'
