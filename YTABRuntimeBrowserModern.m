@@ -17,6 +17,8 @@ extern NSString * const YTABRuntimeNativeSampleChangedNotification;
 - (NSString *)ytab_currentSearchText;
 - (UISearchController *)ytab_ownedSearchController;
 - (void)scopeChanged:(UISegmentedControl *)sender;
+- (void)ytab_setCategoryFilter:(NSString *)category;
+- (NSArray<NSString *> *)ytab_availableCategories;
 @end
 
 static NSString * const YTABModernOverridesKey = @"YTABCRuntimeBrowserOverrides";
@@ -147,6 +149,10 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 
 @interface YTABRuntimeBrowserModernViewController () <UISearchBarDelegate, UIContextMenuInteractionDelegate>
 @property(nonatomic, strong) UIView *scopeHeaderView;
+@property(nonatomic, strong) UIScrollView *categoryScroller;
+@property(nonatomic, strong) UIStackView *categoryStack;
+@property(nonatomic, copy) NSArray<NSString *> *renderedCategories;
+@property(nonatomic, copy) NSString *selectedCategory;
 @property(nonatomic, strong) UISearchBar *pinnedSearchBar;
 @property(nonatomic) BOOL usesNativeSearchPlacement;
 @property(nonatomic) NSInteger ytab_initialScope;
@@ -161,7 +167,10 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 }
 - (instancetype)initWithInitialScope:(NSInteger)scope {
     self = [super initWithStyle:UITableViewStylePlain];
-    if (self) _ytab_initialScope = scope == 0 ? 0 : 1;
+    if (self) {
+        _ytab_initialScope = scope == 0 ? 0 : 1;
+        _selectedCategory = @"Runtime";
+    }
     return self;
 }
 
@@ -242,27 +251,52 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
         self.pinnedSearchBar = search;
     }
 
-    UISegmentedControl *scope = nil;
+    // Keep the original inventory engine but remove its large gray
+    // two-segment control. Class-family glass pills filter that one inventory.
+    UISegmentedControl *legacyScope = nil;
     @try {
         id value = [self valueForKey:@"scopeControl"];
-        if ([value isKindOfClass:UISegmentedControl.class]) scope = value;
+        if ([value isKindOfClass:UISegmentedControl.class]) legacyScope = value;
     } @catch (__unused NSException *exception) {}
-    [scope removeFromSuperview];
-    scope.backgroundColor = UIColor.clearColor;
-    if (scope && self.ytab_initialScope != 0 &&
-        scope.selectedSegmentIndex != self.ytab_initialScope) {
-        scope.selectedSegmentIndex = self.ytab_initialScope;
-        [self scopeChanged:scope];
+    [legacyScope removeFromSuperview];
+    if (legacyScope && self.ytab_initialScope != 0) {
+        legacyScope.selectedSegmentIndex = 1;
+        [self scopeChanged:legacyScope];
     }
 
-    CGFloat headerHeight = self.usesNativeSearchPlacement ? 52.0 : 104.0;
+    CGFloat headerHeight = self.usesNativeSearchPlacement ? 54.0 : 106.0;
     UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, headerHeight)];
-    header.backgroundColor = [UIColor clearColor];
+    header.backgroundColor = UIColor.clearColor;
+    header.opaque = NO;
     if (self.pinnedSearchBar) [header addSubview:self.pinnedSearchBar];
 
-    // Avoid redundant 'VIEW' chrome; the segmented control communicates the scope.
-    if (scope) [header addSubview:scope];
+    UIScrollView *scroll = [[UIScrollView alloc] initWithFrame:CGRectZero];
+    scroll.backgroundColor = UIColor.clearColor;
+    scroll.opaque = NO;
+    scroll.showsHorizontalScrollIndicator = NO;
+    scroll.showsVerticalScrollIndicator = NO;
+    scroll.alwaysBounceHorizontal = YES;
+    scroll.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+    UIStackView *categories = [UIStackView new];
+    categories.axis = UILayoutConstraintAxisHorizontal;
+    categories.alignment = UIStackViewAlignmentCenter;
+    categories.spacing = 8;
+    categories.translatesAutoresizingMaskIntoConstraints = NO;
+    [scroll addSubview:categories];
+    [NSLayoutConstraint activateConstraints:@[
+        [categories.leadingAnchor
+            constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor constant:16],
+        [categories.trailingAnchor
+            constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-16],
+        [categories.centerYAnchor
+            constraintEqualToAnchor:scroll.frameLayoutGuide.centerYAnchor],
+        [categories.heightAnchor constraintEqualToConstant:40]
+    ]];
+    [header addSubview:scroll];
+    self.categoryScroller = scroll;
+    self.categoryStack = categories;
     self.scopeHeaderView = header;
+    [self ytab_refreshCategoryChips];
     // Do not set tableHeaderView: it would scroll the search out of sight.
     self.tableView.tableHeaderView = nil;
     // No custom floating search overlays the list; respect UIKit safe area.
@@ -279,6 +313,74 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
                                           style:UIBarButtonItemStylePlain
                                          target:self action:@selector(clearOverrides)];
     self.navigationItem.rightBarButtonItem.accessibilityLabel = @"Clear only generic runtime method overrides";
+}
+
+- (void)ytab_refreshCategoryChips {
+    if (!self.categoryStack) return;
+    NSArray<NSString *> *categories = [self ytab_availableCategories];
+    if ([self.renderedCategories isEqualToArray:categories]) return;
+    self.renderedCategories = categories.copy;
+    for (UIView *button in self.categoryStack.arrangedSubviews) {
+        [self.categoryStack removeArrangedSubview:button];
+        [button removeFromSuperview];
+    }
+    for (NSString *category in categories) {
+        UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+        BOOL selected = [category isEqualToString:self.selectedCategory];
+        UIButtonConfiguration *config = nil;
+        if (@available(iOS 26.0, *)) {
+            config = selected ? [UIButtonConfiguration glassButtonConfiguration]
+                              : [UIButtonConfiguration clearGlassButtonConfiguration];
+        } else if (@available(iOS 15.0, *)) {
+            config = selected ? [UIButtonConfiguration tintedButtonConfiguration]
+                              : [UIButtonConfiguration plainButtonConfiguration];
+        }
+        config.title = category;
+        config.baseForegroundColor = selected ? UIColor.labelColor
+                                               : UIColor.secondaryLabelColor;
+        config.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+        config.contentInsets = NSDirectionalEdgeInsetsMake(6, 14, 6, 14);
+        button.configuration = config;
+        button.accessibilityIdentifier =
+            [@"YTABC_CATEGORY_" stringByAppendingString:category];
+        button.accessibilityLabel = [NSString stringWithFormat:@"%@ Boolean category",
+                                      category];
+        button.accessibilityTraits = selected
+            ? (UIAccessibilityTraitButton | UIAccessibilityTraitSelected)
+            : UIAccessibilityTraitButton;
+        objc_setAssociatedObject(button, YTABModernPatchKeyAssociation,
+                                 category, OBJC_ASSOCIATION_COPY_NONATOMIC);
+        [button addTarget:self action:@selector(ytab_categoryTapped:)
+              forControlEvents:UIControlEventTouchUpInside];
+        [self.categoryStack addArrangedSubview:button];
+    }
+}
+
+- (void)ytab_categoryTapped:(UIButton *)button {
+    NSString *category = objc_getAssociatedObject(button, YTABModernPatchKeyAssociation);
+    if (!category.length || [category isEqualToString:self.selectedCategory]) return;
+    self.selectedCategory = category;
+    // The Native Tools legacy 'overrides' shortcut can still open this view.
+    // As soon as a user chooses a category, use the full Boolean catalog.
+    UISegmentedControl *legacy = nil;
+    @try { legacy = [self valueForKey:@"scopeControl"]; }
+    @catch (__unused NSException *exception) {}
+    if ([legacy isKindOfClass:UISegmentedControl.class] &&
+        legacy.selectedSegmentIndex != 0) {
+        legacy.selectedSegmentIndex = 0;
+        [self scopeChanged:legacy];
+    }
+    [self ytab_setCategoryFilter:category];
+    self.renderedCategories = nil;
+    [self ytab_refreshCategoryChips];
+    [self.categoryScroller scrollRectToVisible:
+        [button convertRect:button.bounds toView:self.categoryScroller]
+                                  animated:YES];
+}
+
+- (void)applyFilter {
+    [super applyFilter];
+    [self ytab_refreshCategoryChips];
 }
 
 - (void)dealloc {
@@ -314,15 +416,11 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     if (!header) return;
     CGFloat width = CGRectGetWidth(self.tableView.bounds);
     CGFloat searchHeight = self.usesNativeSearchPlacement ? 0.0 : 52.0;
-    header.frame = CGRectMake(0, 0, width, searchHeight + 52.0);
+    header.frame = CGRectMake(0, 0, width, searchHeight + 54.0);
     if (self.pinnedSearchBar)
         self.pinnedSearchBar.frame = CGRectMake(8, 0, MAX(0, width - 16), 52);
-    UISegmentedControl *scope = nil;
-    @try {
-        id value = [self valueForKey:@"scopeControl"];
-        if ([value isKindOfClass:UISegmentedControl.class]) scope = value;
-    } @catch (__unused NSException *exception) {}
-    scope.frame = CGRectMake(20, searchHeight + 8, MAX(0, width - 40), 36);
+    self.categoryScroller.frame = CGRectMake(0, searchHeight,
+                                              width, 54.0);
 }
 
 - (NSString *)ytab_currentSearchText {
@@ -351,7 +449,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
     (void)tableView; (void)section;
-    return self.usesNativeSearchPlacement ? 52.0 : 104.0;
+    return self.usesNativeSearchPlacement ? 54.0 : 106.0;
 }
 
 - (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
@@ -361,7 +459,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     (void)tableView; (void)section;
-    return nil; // pinned search + scope is the complete section header
+    return nil; // translucent glass category buttons have no background strip
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
