@@ -51,6 +51,7 @@ static BOOL sYTABRuntimeSampleRefreshPending;
 static NSArray<YTABRuntimeMethod *> *sYTABRuntimeMethodCatalog;
 static NSMutableDictionary<NSString *, NSArray<YTABRuntimeMethod *> *> *sYTABRuntimeFamilyCatalog;
 static NSString *YTABRuntimeFamilyForClassName(NSString *name);
+static dispatch_queue_t YTABRuntimeInventoryQueue(void);
 static BOOL sYTABRuntimeAutomaticIndexStarted;
 static NSMutableArray<YTABRuntimeMethod *> *sYTABRuntimeIncrementalCatalog;
 NSString * const YTABRuntimeAutoIndexNotification = @"YTABRuntimeAutoIndexNotification";
@@ -669,11 +670,11 @@ static NSArray<NSString *> *YTABRuntimeSearchTokens(NSString *query) {
 @interface YTABRuntimeBrowserViewController () <UISearchResultsUpdating>
 @property(nonatomic, strong) NSArray<YTABRuntimeMethod *> *allMethods;
 @property(nonatomic, strong) NSArray<YTABRuntimeMethod *> *visibleMethods;
+@property(nonatomic, strong) NSArray *visibleRows;
 @property(nonatomic, strong) UISearchController *searchController;
 @property(nonatomic, strong) UISegmentedControl *scopeControl;
 @property(nonatomic, copy) NSString *ytab_selectedCategory;
 @property(atomic) NSUInteger scanGeneration;
-@property(nonatomic) BOOL ytab_forceFullScan;
 @end
 
 // Serialize inventory requests. A rapid Flags -> Methods -> Overrides switch
@@ -746,8 +747,12 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeMergeCatalogs(
         style:UIBarButtonItemStylePlain
         target:self
         action:@selector(clearOverrides)];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+        selector:@selector(ytab_autoIndexUpdated:)
+        name:YTABRuntimeAutoIndexNotification object:nil];
 
-    [self loadMethods];
+    [self loadMethods];              // immediate captured state
+    YTABRuntimeStartAutomaticIndex(); // full catalog runs independently
 }
 
 - (void)scopeChanged:(UISegmentedControl *)sender {
@@ -758,79 +763,51 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeMergeCatalogs(
 
 - (void)loadMethods {
     NSUInteger generation = ++self.scanGeneration;
-    NSString *category = self.ytab_selectedCategory ?: @"Runtime";
-    BOOL overridesOnly = self.scopeControl.selectedSegmentIndex == 1;
-    // Config flags have a separate original-return cache and do not need a
-    // generic scan. Native families are scanned only when explicitly chosen.
-    BOOL isConfigCategory = [@[@"ColdConfig", @"HotConfig", @"GlobalConfig"]
-        containsObject:category];
-    BOOL deepScan = !overridesOnly && !isConfigCategory &&
-        (![category isEqualToString:@"Runtime"] || self.ytab_forceFullScan);
     self.tableView.backgroundView = nil;
     __weak typeof(self) weakSelf = self;
-
-    dispatch_async(YTABRuntimeInventoryQueue(), ^{
-        // Fast stage: read already captured native config values and the
-        // small set of saved patches. Never enumerate YouTube classes here.
+    // Snapshot work uses a separate user-initiated queue. A two-minute
+    // low-priority ObjC enumeration must never queue in front of first paint
+    // or a category change.
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSArray *captured = YTABRuntimeDiscoverMethods(
-            YTABRuntimeImageScopeFlags, nil, nil);
+            YTABRuntimeImageScopeFlags, nil, nil, nil);
         NSArray *stored = YTABRuntimeDiscoverMethods(
-            YTABRuntimeImageScopeOverrides, nil, nil);
-        NSArray *fast = YTABRuntimeMergeCatalogs(captured, stored);
+            YTABRuntimeImageScopeOverrides, nil, nil, nil);
+        NSArray *fast = YTABRuntimeMergeCatalogs(
+            YTABRuntimeMergeCatalogs(captured, stored),
+            YTABRuntimeCurrentIndexSnapshot());
         dispatch_async(dispatch_get_main_queue(), ^{
             __strong typeof(weakSelf) owner = weakSelf;
             if (!owner || owner.scanGeneration != generation) return;
-            owner.allMethods = fast;
-            [owner applyFilter];
-            if (deepScan && !owner.visibleMethods.count) {
-                UILabel *hint = [UILabel new];
-                hint.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
-                hint.textColor = UIColor.secondaryLabelColor;
-                hint.textAlignment = NSTextAlignmentCenter;
-                hint.numberOfLines = 0;
-                hint.text = [NSString stringWithFormat:
-                    @"Indexing %@ native getters in the background. Original values appear only after an actual native invocation.",
-                    category];
-                owner.tableView.backgroundView = hint;
-            }
-        });
-        if (!deepScan) return;
-        // Allow the quick snapshot to reach UIKit before the low-priority
-        // scan; any category change invalidates the previous generation.
-        BOOL (^cancelled)(void) = ^BOOL {
-            __strong typeof(weakSelf) owner = weakSelf;
-            return !owner || owner.scanGeneration != generation;
-        };
-        if (cancelled()) return;
-        NSArray *discovered = YTABRuntimeDiscoverMethods(
-            YTABRuntimeImageScopeAll, category, cancelled);
-        if (cancelled()) return;
-        NSArray *combined = YTABRuntimeMergeCatalogs(fast, discovered);
-        dispatch_async(dispatch_get_main_queue(), ^{
-            __strong typeof(weakSelf) owner = weakSelf;
-            if (!owner || owner.scanGeneration != generation) return;
-            owner.allMethods = combined;
-            owner.tableView.backgroundView = nil;
+            // Preserve batches received since the snapshot was taken.
+            owner.allMethods = YTABRuntimeMergeCatalogs(fast, owner.allMethods);
             [owner applyFilter];
             [owner.tableView.refreshControl endRefreshing];
         });
     });
 }
 
-// Full image scan is explicitly requested by pull-to-refresh or a search.
-// Runtime's initial screen never performs this expensive operation.
+// Optional pull-to-refresh only rereads local values; full discovery is
+// started automatically and never requires a pull or search.
 - (void)ytab_requestFullIndex {
-    if (self.scopeControl.selectedSegmentIndex != 0) return;
-    if ([self.ytab_selectedCategory isEqualToString:@"Runtime"]) {
-        if (self.ytab_forceFullScan) {
-            [self.tableView.refreshControl endRefreshing];
-            return;
-        }
-        self.ytab_forceFullScan = YES;
-    }
     [self loadMethods];
 }
 
+- (void)ytab_autoIndexUpdated:(NSNotification *)notification {
+    if (![NSThread isMainThread]) return;
+    NSArray *newMethods = notification.userInfo[@"newMethods"];
+    if ([newMethods isKindOfClass:NSArray.class] && newMethods.count) {
+        self.allMethods = YTABRuntimeMergeCatalogs(self.allMethods, newMethods);
+        [self applyFilter]; // includes the current search text and category
+    } else if ([notification.userInfo[@"complete"] boolValue]) {
+        [self loadMethods]; // normalize against the complete, sorted cache
+    }
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self
+        name:YTABRuntimeAutoIndexNotification object:nil];
+}
 
 
 // Presentation-independent search source. The modern subclass provides a
@@ -898,7 +875,8 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeMergeCatalogs(
     NSString *next = category.length ? category : @"Runtime";
     if ([self.ytab_selectedCategory isEqualToString:next]) return;
     self.ytab_selectedCategory = next;
-    [self loadMethods]; // rapid snapshot then targeted/cancellable scan
+    // Filtering is immediate even while the full background index runs.
+    [self applyFilter];
 }
 
 - (NSArray<NSString *> *)ytab_availableCategories {
@@ -916,14 +894,9 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeMergeCatalogs(
 
 - (void)updateSearchResultsForSearchController:(UISearchController *)searchController {
     (void)searchController;
-    // An explicit selector search is permission to index the full image.
-    // Never do so during the initial empty-search presentation.
-    if ([self.ytab_selectedCategory isEqualToString:@"Runtime"] &&
-        !self.ytab_forceFullScan && [self ytab_currentSearchText].length >= 3) {
-        [self ytab_requestFullIndex];
-    } else {
-        [self applyFilter];
-    }
+    // Search always filters the catalog currently present and automatically
+    // refreshes as new methods are discovered. No manual start gate.
+    [self applyFilter];
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
