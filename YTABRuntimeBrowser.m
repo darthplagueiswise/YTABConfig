@@ -525,7 +525,7 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(
         if (classes) free(classes);
     }
     if (imageNames) free(imageNames);
-    NSUInteger scannedClasses = 0, totalClasses = candidates.count;
+    NSUInteger scannedClasses = 0;
     NSMutableArray<YTABRuntimeMethod *> *pendingBatch = [NSMutableArray array];
     for (NSString *className in candidates) {
         if (cancelled && cancelled()) return @[];
