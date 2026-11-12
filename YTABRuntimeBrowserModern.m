@@ -19,6 +19,7 @@ extern NSString * const YTABRuntimeNativeSampleChangedNotification;
 - (void)scopeChanged:(UISegmentedControl *)sender;
 - (void)ytab_setCategoryFilter:(NSString *)category;
 - (NSArray<NSString *> *)ytab_availableCategories;
+- (void)ytab_requestFullIndex;
 @end
 
 static NSString * const YTABModernOverridesKey = @"YTABCRuntimeBrowserOverrides";
@@ -220,6 +221,13 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
         self.navigationItem.compactAppearance = clearAppearance;
     }
     self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
+    // Manual full index is available without blocking the initial screen.
+    UIRefreshControl *indexRefresh = [UIRefreshControl new];
+    indexRefresh.attributedTitle = [[NSAttributedString alloc]
+        initWithString:@"Index additional native Boolean getters"];
+    [indexRefresh addTarget:self action:@selector(ytab_requestFullIndex)
+           forControlEvents:UIControlEventValueChanged];
+    self.tableView.refreshControl = indexRefresh;
     self.definesPresentationContext = YES;
     [[NSNotificationCenter defaultCenter] addObserver:self
         selector:@selector(ytab_nativeSampleDidChange:)
@@ -445,9 +453,14 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 - (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText {
     if (searchBar != self.pinnedSearchBar) return;
     (void)searchText;
-    // Parent engine filters using ytab_currentSearchText, overridden above.
-    // There is no reliance on UISearchController activation or presentation.
-    [self applyFilter];
+    // A substantive search explicitly requests the deeper runtime catalog.
+    // Initial navigation never does so.
+    if ([self.selectedCategory isEqualToString:@"Runtime"] &&
+        searchText.length >= 3) {
+        [super updateSearchResultsForSearchController:[self ytab_ownedSearchController]];
+    } else {
+        [self applyFilter];
+    }
 }
 
 - (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar {
