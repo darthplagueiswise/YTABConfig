@@ -280,7 +280,23 @@ reject_text YTABRuntimeBrowser.m '[candidates addObject:cls]'
 reject_text YTABRuntimeBrowser.m 'for (Class cls in candidates)'
 
 require_text YTABRuntimeBrowser.m "sYTABRuntimeMethodCatalog = generic.copy"
-require_text YTABRuntimeBrowser.m '"partialMethods": snapshot'
+# Initial paint cannot depend on a complete process-wide runtime scan.
+reject_text YTABRuntimeBrowser.m '"partialMethods": snapshot'
+require_text YTABRuntimeBrowser.m "YTABRuntimeMergeCatalogs(captured, stored)"
+require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeFlags, nil, nil"
+require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeOverrides, nil, nil"
+require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeAll, category, cancelled"
+require_text YTABRuntimeBrowser.m "sYTABRuntimeFamilyCatalog[family]"
+require_text YTABRuntimeBrowser.m "if (cancelled && cancelled()) return @[];"
+require_text YTABRuntimeBrowser.m 'BOOL limitedToFamily'
+require_text YTABRuntimeBrowser.m 'sYTABRuntimeOverrideCache'
+require_text YTABRuntimeBrowser.m 'return YTABRuntimeCachedOverride(key);'
+reject_text YTABRuntimeBrowser.m 'YTABRuntimeStoredOverrides()[key]'
+require_text YTABRuntimeBrowser.m '- (void)ytab_requestFullIndex'
+require_text YTABRuntimeBrowser.m '@property(atomic) NSUInteger scanGeneration;'
+require_text YTABRuntimeBrowserModern.m 'indexRefresh'
+require_text YTABRuntimeBrowserModern.m '@selector(ytab_requestFullIndex)'
+reject_text YTABRuntimeBrowser.m 'ytabc_inventoryProgress:'
 require_text YTABRuntimeBrowser.m 'if (override) return override.boolValue;'
 override_short_circuits="$(grep -Fc 'if (override) return override.boolValue;' YTABRuntimeBrowser.m)"
 if [[ "$override_short_circuits" -ne 3 ]]; then
