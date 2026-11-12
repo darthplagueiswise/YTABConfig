@@ -1,6 +1,6 @@
 Package: com.ps.ytabconfig
 Name: YTABConfig Feature Lab
-Version: 2.0.4
+Version: 2.0.5
 Architecture: iphoneos-arm
 Description: Afterglow Labs Feature Lab for reviewing experimental YouTube features.
 Maintainer: Afterglow Labs
