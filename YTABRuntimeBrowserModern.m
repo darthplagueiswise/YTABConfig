@@ -181,19 +181,24 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     return self;
 }
 
-- (NSArray *)ytab_visibleMethods {
+- (NSArray *)ytab_displayRows {
     @try {
-        id value = [self valueForKey:@"visibleMethods"];
+        id value = [self valueForKey:@"visibleRows"];
         return [value isKindOfClass:NSArray.class] ? value : @[];
     } @catch (__unused NSException *exception) {
         return @[];
     }
 }
 
+- (id)ytab_rowAtIndexPath:(NSIndexPath *)indexPath {
+    NSArray *rows = [self ytab_displayRows];
+    if ((NSUInteger)indexPath.row >= rows.count) return nil;
+    return rows[(NSUInteger)indexPath.row];
+}
+
 - (id)ytab_methodAtIndexPath:(NSIndexPath *)indexPath {
-    NSArray *methods = [self ytab_visibleMethods];
-    if ((NSUInteger)indexPath.row >= methods.count) return nil;
-    return methods[(NSUInteger)indexPath.row];
+    id row = [self ytab_rowAtIndexPath:indexPath];
+    return [row isKindOfClass:NSString.class] ? nil : row;
 }
 
 - (void)viewDidLoad {
@@ -417,9 +422,8 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
         return;
     }
     if (self.isViewLoaded && self.view.window) {
-        // The getter ran for real. Update the visible switches without
-        // re-invoking any YouTube method or changing the current filter.
-        [self.tableView reloadData];
+        // Newly sampled getters may enter Runtime without a saved override.
+        [self applyFilter];
     }
 }
 
@@ -453,14 +457,9 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 - (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText {
     if (searchBar != self.pinnedSearchBar) return;
     (void)searchText;
-    // A substantive search explicitly requests the deeper runtime catalog.
-    // Initial navigation never does so.
-    if ([self.selectedCategory isEqualToString:@"Runtime"] &&
-        searchText.length >= 3) {
-        [super updateSearchResultsForSearchController:[self ytab_ownedSearchController]];
-    } else {
-        [self applyFilter];
-    }
+    // Indexing is automatic and shared. Search always applies immediately
+    // and re-applies as additional config/method batches arrive.
+    [self applyFilter];
 }
 
 - (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar {
@@ -495,8 +494,33 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     return nil;
 }
 
+- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
+    (void)tableView;
+    return [[self ytab_rowAtIndexPath:indexPath] isKindOfClass:NSString.class]
+        ? 39.0 : UITableViewAutomaticDimension;
+}
+
 - (UITableViewCell *)tableView:(UITableView *)tableView
          cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    id row = [self ytab_rowAtIndexPath:indexPath];
+    if ([row isKindOfClass:NSString.class]) {
+        static NSString *groupIdentifier = @"YTABCBooleanConfigHeader";
+        UITableViewCell *group = [tableView dequeueReusableCellWithIdentifier:groupIdentifier];
+        if (!group)
+            group = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault
+                                         reuseIdentifier:groupIdentifier];
+        group.selectionStyle = UITableViewCellSelectionStyleNone;
+        group.backgroundColor = UIColor.clearColor;
+        if (@available(iOS 14.0, *))
+            group.backgroundConfiguration = [UIBackgroundConfiguration clearConfiguration];
+        group.textLabel.text = (NSString *)row;
+        group.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+        group.textLabel.adjustsFontForContentSizeCategory = YES;
+        group.textLabel.textColor = UIColor.secondaryLabelColor;
+        group.textLabel.numberOfLines = 1;
+        group.textLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+        return group;
+    }
     static NSString *identifier = @"YTABRuntimeGlassPatchCell";
     YTABRuntimePatchCell *cell = [tableView dequeueReusableCellWithIdentifier:identifier];
     if (!cell)
@@ -639,6 +663,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
     contextMenuConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath point:(CGPoint)point {
     (void)tableView; (void)point;
     id method = [self ytab_methodAtIndexPath:indexPath];
+    if (!method) return nil;
     return [self ytab_contextMenuForKey:YTABModernStringValue(method, @"patchKey")];
 }
 
@@ -675,6 +700,7 @@ static BOOL YTABModernBoolValue(id object, NSString *key) {
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     id method = [self ytab_methodAtIndexPath:indexPath];
+    if (!method) return; // Config/group heading, not a Boolean toggle.
     NSString *name = YTABModernStringValue(method, @"selectorName");
     NSString *owner = YTABModernStringValue(method, @"className");
     NSString *encoding = YTABModernStringValue(method, @"typeEncoding");
