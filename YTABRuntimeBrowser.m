@@ -626,7 +626,6 @@ static NSArray<NSString *> *YTABRuntimeSearchTokens(NSString *query) {
 @property(nonatomic, copy) NSString *ytab_selectedCategory;
 @property(atomic) NSUInteger scanGeneration;
 @property(nonatomic) BOOL ytab_forceFullScan;
-@property(nonatomic, strong) UILabel *scanProgressLabel;
 @end
 
 // Serialize inventory requests. A rapid Flags -> Methods -> Overrides switch
@@ -638,6 +637,24 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
         queue = dispatch_queue_create("com.ytabconfig.runtime.inventory", DISPATCH_QUEUE_SERIAL);
     });
     return queue;
+}
+
+// Snapshot of native config results and saved local overrides, without an
+// exhaustive binary scan. This is the only work required for first paint.
+static NSArray<YTABRuntimeMethod *> *YTABRuntimeMergeCatalogs(
+    NSArray<YTABRuntimeMethod *> *first,
+    NSArray<YTABRuntimeMethod *> *second) {
+    NSMutableArray<YTABRuntimeMethod *> *result = [NSMutableArray array];
+    NSMutableSet<NSString *> *keys = [NSMutableSet set];
+    for (NSArray<YTABRuntimeMethod *> *group in @[first ?: @[], second ?: @[]]) {
+        for (YTABRuntimeMethod *method in group) {
+            if (![keys containsObject:method.patchKey]) {
+                [keys addObject:method.patchKey];
+                [result addObject:method];
+            }
+        }
+    }
+    return result.copy;
 }
 
 @implementation YTABRuntimeBrowserViewController
@@ -672,10 +689,6 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
     self.navigationItem.searchController = self.searchController;
     self.navigationItem.hidesSearchBarWhenScrolling = NO;
     self.definesPresentationContext = YES;
-    [[NSNotificationCenter defaultCenter] addObserver:self
-        selector:@selector(ytabc_inventoryProgress:)
-        name:YTABRuntimeInventoryProgressNotification object:nil];
-
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
         initWithTitle:@"Clear"
         style:UIBarButtonItemStylePlain
@@ -690,23 +703,6 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
     [self loadMethods];
 }
 
-// Snapshot of native config results and saved local overrides, without an
-// exhaustive binary scan. This is the only work required for first paint.
-static NSArray<YTABRuntimeMethod *> *YTABRuntimeMergeCatalogs(
-    NSArray<YTABRuntimeMethod *> *first,
-    NSArray<YTABRuntimeMethod *> *second) {
-    NSMutableArray<YTABRuntimeMethod *> *result = [NSMutableArray array];
-    NSMutableSet<NSString *> *keys = [NSMutableSet set];
-    for (NSArray<YTABRuntimeMethod *> *group in @[first ?: @[], second ?: @[]]) {
-        for (YTABRuntimeMethod *method in group) {
-            if (![keys containsObject:method.patchKey]) {
-                [keys addObject:method.patchKey];
-                [result addObject:method];
-            }
-        }
-    }
-    return result.copy;
-}
 
 - (void)loadMethods {
     NSUInteger generation = ++self.scanGeneration;
@@ -719,7 +715,6 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeMergeCatalogs(
     BOOL deepScan = !overridesOnly && !isConfigCategory &&
         (![category isEqualToString:@"Runtime"] || self.ytab_forceFullScan);
     self.tableView.backgroundView = nil;
-    self.scanProgressLabel = nil;
     __weak typeof(self) weakSelf = self;
 
     dispatch_async(YTABRuntimeInventoryQueue(), ^{
@@ -785,26 +780,6 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeMergeCatalogs(
 }
 
 
-- (void)ytabc_inventoryProgress:(NSNotification *)notification {
-    if (self.scopeControl.selectedSegmentIndex != 0 ||
-        !self.scanProgressLabel) return;
-    NSUInteger done = [notification.userInfo[@"done"] unsignedIntegerValue];
-    NSUInteger total = [notification.userInfo[@"total"] unsignedIntegerValue];
-    if (total) self.scanProgressLabel.text = [NSString stringWithFormat:
-        @"Native methods: %lu / %lu classes indexed",
-        (unsigned long)done, (unsigned long)total];
-    NSArray *partial = notification.userInfo[@"partialMethods"];
-    if ([partial isKindOfClass:NSArray.class] && partial.count) {
-        self.allMethods = partial;
-        self.tableView.backgroundView = nil; // usable controls, not a spinner
-        [self applyFilter];
-    }
-}
-
-- (void)dealloc {
-    [[NSNotificationCenter defaultCenter] removeObserver:self
-        name:YTABRuntimeInventoryProgressNotification object:nil];
-}
 
 // Presentation-independent search source. The modern subclass provides a
 // standalone UISearchBar which is not managed by UINavigationItem.
