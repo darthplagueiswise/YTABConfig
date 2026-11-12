@@ -820,6 +820,20 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeMergeCatalogs(
     return self.searchController.searchBar.text ?: @"";
 }
 
+// Group parameters under their owning config when the selector exposes an
+// explicit ConfigName__parameter boundary. Otherwise the original ObjC class
+// is the only reliable source grouping; never invent config IDs.
+static NSString *YTABRuntimeConfigGroupTitle(YTABRuntimeMethod *method) {
+    NSString *selector = method.selectorName ?: @"";
+    NSRange separator = [selector rangeOfString:@"__"];
+    if (separator.location != NSNotFound && separator.location > 1 &&
+        separator.location < 90) {
+        NSString *config = [selector substringToIndex:separator.location];
+        return [NSString stringWithFormat:@"%@ · %@", config, method.className];
+    }
+    return method.className.length ? method.className : @"Unknown origin";
+}
+
 - (void)applyFilter {
     NSArray<NSString *> *tokens = YTABRuntimeSearchTokens([self ytab_currentSearchText]);
     BOOL searching = tokens.count > 0;
@@ -866,6 +880,30 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeMergeCatalogs(
     }
     [overridden addObjectsFromArray:unmodified];
     self.visibleMethods = overridden.copy;
+
+    // A single UITableView section keeps the glass category strip pinned,
+    // while lightweight label rows visually bind parameters of each config.
+    // Groups containing active overrides occur first; the first appearance
+    // of each group establishes its stable display position.
+    NSMutableDictionary<NSString *, NSMutableArray<YTABRuntimeMethod *> *> *groups =
+        [NSMutableDictionary dictionary];
+    NSMutableArray<NSString *> *groupOrder = [NSMutableArray array];
+    for (YTABRuntimeMethod *method in self.visibleMethods) {
+        NSString *group = YTABRuntimeConfigGroupTitle(method);
+        NSMutableArray<YTABRuntimeMethod *> *members = groups[group];
+        if (!members) {
+            members = [NSMutableArray array];
+            groups[group] = members;
+            [groupOrder addObject:group];
+        }
+        [members addObject:method];
+    }
+    NSMutableArray *display = [NSMutableArray array];
+    for (NSString *group in groupOrder) {
+        [display addObject:group];
+        [display addObjectsFromArray:groups[group]];
+    }
+    self.visibleRows = display.copy;
     [self.tableView reloadData];
 }
 
@@ -904,7 +942,7 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeMergeCatalogs(
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    return self.visibleMethods.count;
+    return (NSInteger)self.visibleRows.count;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
@@ -928,7 +966,19 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeMergeCatalogs(
         cell.detailTextLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
     }
 
-    YTABRuntimeMethod *method = self.visibleMethods[indexPath.row];
+    id row = self.visibleRows[(NSUInteger)indexPath.row];
+    if ([row isKindOfClass:NSString.class]) {
+        static NSString *groupID = @"YTABRuntimeGroupRow";
+        UITableViewCell *heading = [tableView dequeueReusableCellWithIdentifier:groupID];
+        if (!heading) heading = [[UITableViewCell alloc]
+            initWithStyle:UITableViewCellStyleDefault reuseIdentifier:groupID];
+        heading.textLabel.text = row;
+        heading.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+        heading.textLabel.textColor = UIColor.secondaryLabelColor;
+        heading.selectionStyle = UITableViewCellSelectionStyleNone;
+        return heading;
+    }
+    YTABRuntimeMethod *method = row;
     NSNumber *override = YTABRuntimeOverrideForKey(method.patchKey);
     NSNumber *native = YTABRuntimeObservedNative(method.patchKey);
     NSString *state = override ? (override.boolValue ? @"Force ON" : @"Force OFF") : @"System";
@@ -946,7 +996,9 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeMergeCatalogs(
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    YTABRuntimeMethod *method = self.visibleMethods[indexPath.row];
+    id row = self.visibleRows[(NSUInteger)indexPath.row];
+    if (![row isKindOfClass:YTABRuntimeMethod.class]) return;
+    YTABRuntimeMethod *method = row;
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:method.selectorName
         message:[NSString stringWithFormat:@"%@\n%@\n%@",
                  method.className, method.typeEncoding, method.patchKey]
