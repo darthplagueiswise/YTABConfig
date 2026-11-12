@@ -59,6 +59,8 @@ require_text YTABLabUI.m "youtubeVersion"
 require_text YTABLabUI.m "exportedAt"
 require_text YTABLabUI.m "context"
 require_text YTABLabUI.m "YTABCRuntimeSnapshot"
+require_text YTABLabUI.m "NSDictionary *runtime = YTABCopyRuntimeValues() ?: @{};"
+require_text YTABLabUI.m "NSDictionary<NSString *, id> *metadata = [self.catalog metadataForSelector:selector sourceClass:sourceClass] ?: @{};"
 require_text YTABLabUI.m "nativeCapturedAt"
 require_text YTABLabUI.m "runtimeExportDocumentWithRuntimeSnapshot:"
 require_text YTABLabUI.m "BOOL removed = runtimeState == nil"
@@ -67,7 +69,19 @@ require_text YTABLabUI.m "nativeValue:nil"
 require_text YTABLabUI.m "return YTABResetRuntimeOverride"
 snapshot_count="$(grep -Fc "YTABCRuntimeSnapshot()" YTABLabUI.m)"
 if [[ "$snapshot_count" -ne 1 ]]; then
-    echo "fresh runtime snapshot must be sampled exactly once in the explicit JSON export path" >&2
+    echo "cached runtime state must be snapshotted exactly once in the explicit JSON export path" >&2
+    exit 1
+fi
+if grep -Fq "YTABCRuntimeRefreshAllNativeValues" YTABLabUI.m ||
+   grep -Fq "YTABCRuntimeRefreshAllNativeValues" RuntimeFlagRegistry.m ||
+   grep -Fq "YTABCRuntimeRefreshAllNativeValues" RuntimeFlagRegistry.h; then
+    echo "Feature Lab must export the launch cache without re-running native getters" >&2
+    exit 1
+fi
+
+constructor="$(sed -n '/^%ctor {/,/^}/p' Settings.x)"
+if grep -Eq 'YTABCatalog|JSONObjectWithData|dataWithContentsOfFile' <<<"$constructor"; then
+    echo "the reviewed JSON seed must stay out of the launch constructor" >&2
     exit 1
 fi
 if sed -n '/runtimeExportDocumentWithRuntimeSnapshot:/,/writeJSONExportWithCompletion:/p' YTABLabUI.m |

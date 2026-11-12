@@ -1,0 +1,784 @@
+// Native YouTube 21.43.5 UI entry points. No hooks or symbols from injected
+// third-party dylibs are used as evidence for this catalog.
+//
+// This is a LOCAL navigation/diagnostic hub. It never supplies server identity,
+// replaces tokens, fabricates a responder, or assumes that an Objective-C class
+// can be shown just because its name exists in the Mach-O.
+#import "YTABCNativeMenus.h"
+#import "YTABRuntimeBrowserModern.h"
+extern UIViewController *YTABCCreateSettingsRowsInspector(id settingsOwner);
+#import <objc/runtime.h>
+#import <objc/message.h>
+#import <substrate.h>
+#import <stdlib.h>
+#import <string.h>
+extern NSDictionary<NSString *, id> *YTABCCopyNativeExperimentsHealth(void);
+extern NSDictionary<NSString *, id> *YTABCCopyNativeDiagnostics(void);
+extern BOOL YTABCRetryNativeExperimentsSelectedTab(void);
+extern void YTABCInstallNativeStudyControlsHooks(void);
+extern NSDictionary<NSString *, id> *YTABCCopyNativeStudyControls(void);
+extern BOOL YTABCRunPhenotypeResync(void);
+extern BOOL YTABCClearNativeExperimentsCaches(void);
+
+static __weak id sYTABCObservedPlaybackOverlay;
+static void (*sYTABCOriginalInstallGesture)(id, SEL);
+static const void *YTABCNativeQASwitchKind = &YTABCNativeQASwitchKind;
+
+// Verified local QA control signatures from the 21.43.5 main executable.
+static id YTABCSharedCreationConsole(void) {
+    Class cls = NSClassFromString(@"YTCreationTimelineDebugConsole");
+    SEL shared = NSSelectorFromString(@"shared");
+    Method m = cls ? class_getClassMethod(cls, shared) : NULL;
+    if (!m || strcmp(method_getTypeEncoding(m) ?: "", "@16@0:8")) return nil;
+    @try { return ((id (*)(id, SEL))objc_msgSend)(cls, shared); }
+    @catch (__unused NSException *exception) { return nil; }
+}
+static NSNumber *YTABCReadQABool(id target, NSString *name) {
+    if (!target) return nil;
+    SEL selector = NSSelectorFromString(name);
+    Method m = class_getInstanceMethod(object_getClass(target), selector);
+    if (!m || strcmp(method_getTypeEncoding(m) ?: "", "B16@0:8")) return nil;
+    @try { return @(((BOOL (*)(id, SEL))objc_msgSend)(target, selector)); }
+    @catch (__unused NSException *exception) { return nil; }
+}
+static BOOL YTABCSetQABool(id target, NSString *name, BOOL value) {
+    if (!target) return NO;
+    SEL selector = NSSelectorFromString(name);
+    Method m = class_getInstanceMethod(object_getClass(target), selector);
+    if (!m || strcmp(method_getTypeEncoding(m) ?: "", "v20@0:8B16")) return NO;
+    @try {
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(target, selector, value);
+        return YES;
+    } @catch (__unused NSException *exception) { return NO; }
+}
+
+static void YTABCObservedInstallGesture(id self, SEL cmd) {
+    // Capture ONLY an instance created by YouTube's own playback lifecycle.
+    sYTABCObservedPlaybackOverlay = self;
+    if (sYTABCOriginalInstallGesture) sYTABCOriginalInstallGesture(self, cmd);
+}
+
+void YTABCInstallNativeMenuObservationHooks(void) {
+    static BOOL installed = NO;
+    @synchronized([NSObject class]) {
+        if (installed) return;
+        Class cls = objc_getClass("YTPlaybackDebugOverlayController");
+        SEL sel = NSSelectorFromString(@"installGestureRecognizer");
+        Method method = cls ? class_getInstanceMethod(cls, sel) : NULL;
+        if (!method || method_getNumberOfArguments(method) != 2) return;
+        char *type = method_copyReturnType(method);
+        BOOL isVoid = type && type[0] == 'v';
+        if (type) free(type);
+        if (!isVoid) {
+            NSLog(@"[YTABC NativeMenus] Playback gesture ABI mismatch; not hooking");
+            return;
+        }
+        MSHookMessageEx(cls, sel, (IMP)YTABCObservedInstallGesture,
+                        (IMP *)&sYTABCOriginalInstallGesture);
+        installed = YES;
+    }
+}
+
+static void YTABCShowNotice(UIViewController *owner, NSString *title, NSString *message) {
+    NSLog(@"[YTABC NativeMenus] %@: %@", title, message);
+    if (!owner) return;
+    UIAlertController *alert =
+        [UIAlertController alertControllerWithTitle:title
+                                            message:message
+                                     preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK"
+                                            style:UIAlertActionStyleDefault
+                                          handler:nil]];
+    [owner presentViewController:alert animated:YES completion:nil];
+}
+
+static NSString *YTABCClassReport(NSArray<NSString *> *classes) {
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    for (NSString *name in classes) {
+        Class cls = NSClassFromString(name);
+        [lines addObject:[NSString stringWithFormat:@"%@: %@",
+                          name, cls ? @"present" : @"absent"]];
+    }
+    return [lines componentsJoinedByString:@"\n"];
+}
+
+// Present native diagnostics as a scrollable, selectable document.
+@interface YTABCDiagnosticsReportViewController : UIViewController
+@property(nonatomic, copy) NSString *report;
+- (instancetype)initWithTitle:(NSString *)title report:(NSString *)report;
+@end
+
+@implementation YTABCDiagnosticsReportViewController
+- (instancetype)initWithTitle:(NSString *)title report:(NSString *)report {
+    self = [super initWithNibName:nil bundle:nil];
+    if (self) { self.title = title; _report = [report copy] ?: @""; }
+    return self;
+}
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = UIColor.systemBackgroundColor;
+    UITextView *body = [UITextView new];
+    body.editable = NO;
+    body.selectable = YES;
+    body.alwaysBounceVertical = YES;
+    body.backgroundColor = UIColor.clearColor;
+    body.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    body.adjustsFontForContentSizeCategory = YES;
+    body.textColor = UIColor.labelColor;
+    // Native typography separates section headings, observations and
+    // explanations instead of presenting one giant unformatted log.
+    NSMutableAttributedString *styled = [NSMutableAttributedString new];
+    NSParagraphStyle *paragraph = nil;
+    NSMutableParagraphStyle *spacing = [NSMutableParagraphStyle new];
+    spacing.lineSpacing = 4;
+    paragraph = [spacing copy];
+    for (NSString *line in [self.report componentsSeparatedByString:@"\n"]) {
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:
+            [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        BOOL sectionHeading = trimmed.length > 0 && trimmed.length < 55 &&
+            ![trimmed containsString:@"="] && ![trimmed containsString:@":"] &&
+            [trimmed isEqualToString:trimmed.uppercaseString];
+        BOOL keyValue = [trimmed containsString:@"="];
+        UIFont *font = sectionHeading
+            ? [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline]
+            : keyValue
+            ? [[UIFontMetrics metricsForTextStyle:UIFontTextStyleSubheadline]
+                scaledFontForFont:[UIFont monospacedSystemFontOfSize:13 weight:UIFontWeightRegular]]
+            : [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+        UIColor *color = sectionHeading ? UIColor.labelColor :
+            keyValue ? UIColor.secondaryLabelColor : UIColor.labelColor;
+        NSString *text = [line stringByAppendingString:@"\n"];
+        NSAttributedString *span = [[NSAttributedString alloc] initWithString:text
+            attributes:@{NSFontAttributeName: font,
+                         NSForegroundColorAttributeName: color,
+                         NSParagraphStyleAttributeName: paragraph}];
+        [styled appendAttributedString:span];
+    }
+    body.attributedText = styled;
+    body.textContainerInset = UIEdgeInsetsMake(18, 16, 18, 16);
+    body.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:body];
+    UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
+    [NSLayoutConstraint activateConstraints:@[
+        [body.topAnchor constraintEqualToAnchor:safe.topAnchor],
+        [body.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor],
+        [body.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
+        [body.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
+    ]];
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+        initWithTitle:@"Copy" style:UIBarButtonItemStylePlain
+        target:self action:@selector(copyReport)];
+}
+- (void)copyReport {
+    [UIPasteboard generalPasteboard].string = self.report;
+}
+@end
+
+static void YTABCPushDiagnosticsReport(UIViewController *owner, NSString *title,
+                                      NSString *report) {
+    YTABCDiagnosticsReportViewController *detail =
+        [[YTABCDiagnosticsReportViewController alloc] initWithTitle:title report:report];
+    if (owner.navigationController) {
+        [owner.navigationController pushViewController:detail animated:YES];
+    } else {
+        YTABCShowNotice(owner, title, report);
+    }
+}
+
+@interface YTABCNativeMenusViewController : UITableViewController
+@property(nonatomic, weak) id settingsOwner;
+@property(nonatomic, strong) NSArray<NSDictionary *> *sections;
+- (instancetype)initWithSettingsOwner:(id)owner;
+- (instancetype)initWithSettingsOwner:(id)owner mode:(NSString *)mode;
+@end
+
+@implementation YTABCNativeMenusViewController
+
+- (instancetype)initWithSettingsOwner:(id)owner {
+    self = [super initWithStyle:UITableViewStyleInsetGrouped];
+    if (!self) return nil;
+    _settingsOwner = owner;
+    self.title = @"YouTube Native Tools";
+    _sections = @[
+        @{
+            @"title": @"Native experiment screens",
+            @"rows": @[
+                // This exact root constructs the native results controller,
+                // per original ARM64: classref 0x10cbdada8 (0x101434748).
+                // YTSettingsExperimentsResultsViewController is a child, not
+                // an independently launchable menu.
+                @{@"title": @"Open experiments — native navigation",
+                  @"subtitle": @"Use YTSettingsExperimentsViewController with the live Settings responder for tabs and studies",
+                  @"kind": @"studies",
+                  @"class": @"YTSettingsExperimentsViewController"},
+                @{@"title": @"Open experiments — modal",
+                  @"subtitle": @"Same native root in a dismissible navigation sheet",
+                  @"kind": @"studiesModal",
+                  @"class": @"YTSettingsExperimentsViewController"},
+                @{@"title": @"Open legacy Studies Top controller",
+                  @"subtitle": @"Alternate native Top controller, only if its initializer is present",
+                  @"kind": @"controller",
+                  @"class": @"YTSettingsExperimentsTopViewController"},
+                @{@"title": @"Retry current experiment tab",
+                  @"subtitle": @"Re-run the currently selected native tab without forging data",
+                  @"kind": @"experimentsRetry"},
+                @{@"title": @"Experiment lifecycle and search report",
+                  @"subtitle": @"Parent responder, native tab count, search calls and result sections",
+                  @"kind": @"experimentsHealth"},
+                @{@"title": @"Study cells and opt-in report",
+                  @"subtitle": @"Observed layout, badge, opt-in controls and native callbacks",
+                  @"kind": @"studyControlsHealth"},
+                @{@"title": @"Eligibility / request report",
+                  @"subtitle": @"Native service results and real category construction, not a menu bypass",
+                  @"kind": @"eligibilityReport"}
+            ]
+        },
+        @{
+            @"title": @"Developer / QA controls",
+            @"rows": @[
+                @{@"title": @"All Boolean controls",
+                  @"subtitle": @"One list for captured flags and other patchable native BOOLs",
+                  @"kind": @"runtimeControls"},
+                @{@"title": @"Toggle playback debug overlay",
+                  @"subtitle": @"Requires an overlay previously created by the real player",
+                  @"kind": @"playback",
+                  @"class": @"YTPlaybackDebugOverlayController"},
+                @{@"title": @"Toggle creation timeline console",
+                  @"subtitle": @"Calls the native shared console only on explicit tap",
+                  @"kind": @"creation",
+                  @"class": @"YTCreationTimelineDebugConsole"},
+                @{@"title": @"Watch debug overlay — inspect",
+                  @"subtitle": @"Service/controller existence; no validated menu initializer",
+                  @"kind": @"watch",
+                  @"class": @"YTWatchDebugOverlayController"},
+                @{@"title": @"Lens debug provider — inspect",
+                  @"subtitle": @"Check provider presence; Disabled provider is not a menu",
+                  @"kind": @"lens",
+                  @"class": @"LNSDebugMenuSettingProvider"}
+            ]
+        },
+        @{
+            @"title": @"Configuration infrastructure",
+            @"rows": @[
+                @{@"title": @"Phenotype / Heterodyne inventory",
+                  @"subtitle": @"Presence of configuration, snapshot and sync classes (read only)",
+                  @"kind": @"phenotype"},
+                @{@"title": @"Developer / QA inventory",
+                  @"subtitle": @"Check settings and command entry points (read only)",
+                  @"kind": @"developer"},
+                @{@"title": @"Resync native Phenotype",
+                  @"subtitle": @"Use syncWithCallback: on the observed native syncer",
+                  @"kind": @"phenotypeResync"},
+                @{@"title": @"Clear native experiment caches",
+                  @"subtitle": @"Use clearCaches on the observed experiment service",
+                  @"kind": @"experimentsClearCaches"},
+                @{@"title": @"ColdConfig Boolean flags",
+                  @"subtitle": @"Open native ColdConfig flags; switch to HotConfig or GlobalConfig using category chips",
+                  @"kind": @"configFlags"},
+                @{@"title": @"YouTube config inventory",
+                  @"subtitle": @"Cold, Hot, Global and flag-ID infrastructure (read only)",
+                  @"kind": @"config"},
+                @{@"title": @"Phenotype Boolean flags",
+                  @"subtitle": @"Filter native Phenotype classes and their Boolean flag getters",
+                  @"kind": @"runtimePhenotype"}
+            ]
+        },
+        @{
+            @"title": @"Native Settings categories and rows",
+            @"rows": @[
+                @{@"title": @"Reveal loaded Settings sections",
+                  @"subtitle": @"Inspect real categories and reveal native headers locally; Restore returns to system behavior",
+                  @"kind": @"settingsHidden"}
+            ]
+        }
+    ];
+    return self;
+}
+
+// Direct submenus from YouTube Settings. Avoid burying native launchers
+// inside a huge diagnostics-only catalog.
+- (instancetype)initWithSettingsOwner:(id)owner mode:(NSString *)mode {
+    self = [self initWithSettingsOwner:owner];
+    if (!self || !mode.length) return self;
+    NSUInteger index = NSNotFound;
+    if ([mode isEqualToString:@"experiments"]) index = 0;
+    else if ([mode isEqualToString:@"debug"]) index = 1;
+    else if ([mode isEqualToString:@"configs"]) index = 2;
+    else if ([mode isEqualToString:@"hidden"]) index = 3;
+    if (index != NSNotFound && index < self.sections.count) {
+        self.sections = @[self.sections[index]];
+        self.title = @{@"experiments": @"Native Experiments",
+                       @"debug": @"Debug & QA",
+                       @"configs": @"Native Configs",
+                       @"hidden": @"Settings / Hidden Rows"}[mode];
+    }
+    return self;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.tableView.rowHeight = UITableViewAutomaticDimension;
+    self.tableView.estimatedRowHeight = 72;
+    self.tableView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentAutomatic;
+    self.tableView.backgroundColor = UIColor.systemGroupedBackgroundColor;
+    self.tableView.separatorInset = UIEdgeInsetsMake(0, 18, 0, 18);
+    if (@available(iOS 15.0, *)) self.tableView.sectionHeaderTopPadding = 8;
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
+    self.tableView.accessibilityIdentifier = @"YTABC_NATIVE_TOOLS";
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    (void)tableView;
+    return self.sections.count;
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    (void)tableView;
+    return [self.sections[(NSUInteger)section][@"rows"] count];
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    (void)tableView;
+    return self.sections[(NSUInteger)section][@"title"];
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView
+         cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    (void)tableView;
+    NSDictionary *entry = self.sections[(NSUInteger)indexPath.section][@"rows"]
+                                        [(NSUInteger)indexPath.row];
+    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
+                                                   reuseIdentifier:nil];
+    cell.textLabel.text = entry[@"title"];
+    cell.textLabel.numberOfLines = 2;
+    cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    cell.textLabel.adjustsFontForContentSizeCategory = YES;
+    cell.detailTextLabel.text = entry[@"subtitle"];
+    cell.detailTextLabel.numberOfLines = 2;
+    cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    cell.detailTextLabel.adjustsFontForContentSizeCategory = YES;
+    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    // Direct stateful controls for real QA features available in this session.
+    NSString *kind = entry[@"kind"];
+    if ([kind isEqualToString:@"playback"] || [kind isEqualToString:@"creation"]) {
+        id target = [kind isEqualToString:@"playback"]
+            ? sYTABCObservedPlaybackOverlay : YTABCSharedCreationConsole();
+        NSNumber *native = YTABCReadQABool(target,
+            [kind isEqualToString:@"playback"] ? @"debugOverlayVisible" : @"isEnabled");
+        if (native) {
+            UISwitch *toggle = [UISwitch new];
+            toggle.onTintColor = UIColor.systemGreenColor;
+            [toggle setOn:native.boolValue animated:NO];
+            toggle.accessibilityLabel = [kind isEqualToString:@"playback"]
+                ? @"Native playback debug overlay" : @"Native creation timeline debug console";
+            objc_setAssociatedObject(toggle, YTABCNativeQASwitchKind, kind,
+                OBJC_ASSOCIATION_COPY_NONATOMIC);
+            [toggle addTarget:self action:@selector(ytabc_nativeQASwitchChanged:)
+                forControlEvents:UIControlEventValueChanged];
+            cell.accessoryType = UITableViewCellAccessoryNone;
+            cell.accessoryView = toggle;
+        } else {
+            cell.detailTextLabel.text = [kind isEqualToString:@"playback"]
+                ? @"No live playback overlay. Open a video first."
+                : @"The native debug console has not been initialized.";
+        }
+    }
+    // A report/inspection is not a native launchable destination. Avoid
+    // presenting inventory rows with the same affordance as real actions.
+    NSSet *reports = [NSSet setWithArray:@[@"watch", @"lens", @"phenotype",
+        @"developer", @"config", @"eligibilityReport", @"experimentsHealth",
+        @"studyControlsHealth"]];
+    if ([reports containsObject:kind]) {
+        cell.accessoryType = UITableViewCellAccessoryNone;
+        cell.imageView.image = [UIImage systemImageNamed:@"info.circle"];
+        cell.imageView.tintColor = UIColor.tertiaryLabelColor;
+    }
+    NSString *className = entry[@"class"];
+    if (className && !NSClassFromString(className)) {
+        cell.detailTextLabel.text =
+            [NSString stringWithFormat:@"%@ — class absent in this build",
+                                       entry[@"subtitle"]];
+        if (@available(iOS 13.0, *)) {
+            cell.textLabel.textColor = [UIColor secondaryLabelColor];
+        } else {
+            cell.textLabel.textColor = [UIColor grayColor];
+        }
+    }
+    return cell;
+}
+
+- (void)ytabc_nativeQASwitchChanged:(UISwitch *)sender {
+    NSString *kind = objc_getAssociatedObject(sender, YTABCNativeQASwitchKind);
+    id target = [kind isEqualToString:@"playback"]
+        ? sYTABCObservedPlaybackOverlay
+        : ([kind isEqualToString:@"creation"] ? YTABCSharedCreationConsole() : nil);
+    NSString *setter = [kind isEqualToString:@"playback"]
+        ? @"setDebugOverlayVisible:" : @"setIsEnabled:";
+    if (!target || !YTABCSetQABool(target, setter, sender.isOn)) {
+        [sender setOn:!sender.isOn animated:YES];
+        YTABCShowNotice(self, @"QA control unavailable",
+            @"Native QA instance or its verified Boolean setter is unavailable.");
+        return;
+    }
+    [[[UISelectionFeedbackGenerator alloc] init] selectionChanged];
+    [self.tableView reloadData];
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [self.tableView reloadData];
+}
+
+- (BOOL)pushNativeController:(NSString *)className {
+    Class cls = NSClassFromString(className);
+    if (!cls || ![cls isSubclassOfClass:[UIViewController class]]) {
+        YTABCShowNotice(self, @"Native screen unavailable",
+                        [NSString stringWithFormat:@"%@ is not a UIViewController in this build.",
+                                                   className]);
+        return NO;
+    }
+    SEL initializer = NSSelectorFromString(@"initWithParentResponder:");
+    if (!class_getInstanceMethod(cls, initializer)) {
+        YTABCShowNotice(self, @"Initializer unavailable",
+                        [NSString stringWithFormat:@"%@ lacks initWithParentResponder:.",
+                                                   className]);
+        return NO;
+    }
+    id owner = self.settingsOwner;
+    Class settingsClass = NSClassFromString(@"YTSettingsViewController");
+    if (!owner || (settingsClass && ![owner isKindOfClass:settingsClass])) {
+        YTABCShowNotice(self, @"Missing native context",
+                        @"The original YouTube settings controller is no longer available.");
+        return NO;
+    }
+    // The native experiments root is a sibling of YTSettingsViewController
+    // under YTStyledViewController. Use the live Settings VC itself as
+    // parentResponder; NOT Settings.parentResponder (which skips the VC).
+    id responder = owner;
+    @try {
+        id controller = ((id (*)(id, SEL, id))objc_msgSend)(
+            [cls alloc], initializer, responder);
+        if (![controller isKindOfClass:[UIViewController class]]) {
+            YTABCShowNotice(self, @"Invalid native controller",
+                            [NSString stringWithFormat:@"%@ failed to construct.", className]);
+            return NO;
+        }
+        if (self.navigationController) {
+            [self.navigationController pushViewController:controller animated:YES];
+            return YES;
+        }
+        SEL push = NSSelectorFromString(@"pushViewController:");
+        if (owner && [owner respondsToSelector:push]) {
+            ((void (*)(id, SEL, UIViewController *))objc_msgSend)(owner, push, controller);
+            return YES;
+        }
+        YTABCShowNotice(self, @"Navigation unavailable",
+                        @"No native settings navigator is active.");
+        return NO;
+    } @catch (NSException *e) {
+        YTABCShowNotice(self, @"Native screen failed",
+                        [NSString stringWithFormat:@"%@: %@", className, e.reason]);
+        return NO;
+    }
+}
+
+- (void)togglePlaybackOverlay {
+    id overlay = sYTABCObservedPlaybackOverlay;
+    SEL read = NSSelectorFromString(@"debugOverlayVisible");
+    SEL write = NSSelectorFromString(@"setDebugOverlayVisible:");
+    Method getterMethod = overlay ? class_getInstanceMethod([overlay class], read) : NULL;
+    Method setterMethod = overlay ? class_getInstanceMethod([overlay class], write) : NULL;
+    if (!overlay || !getterMethod || !setterMethod ||
+        method_getNumberOfArguments(getterMethod) != 2 ||
+        method_getNumberOfArguments(setterMethod) != 3) {
+        YTABCShowNotice(self, @"Playback overlay not active",
+                        @"YouTube has not invoked installGestureRecognizer on a live "
+                        @"YTPlaybackDebugOverlayController. Open a video first. "
+                        @"No overlay object will be fabricated.");
+        return;
+    }
+    @try {
+        BOOL wasVisible = ((BOOL (*)(id, SEL))objc_msgSend)(overlay, read);
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(overlay, write, !wasVisible);
+        YTABCShowNotice(self, @"Playback overlay",
+                        !wasVisible ? @"Native debug overlay enabled."
+                                    : @"Native debug overlay disabled.");
+    } @catch (NSException *e) {
+        YTABCShowNotice(self, @"Playback overlay error", e.reason);
+    }
+}
+
+- (void)toggleCreationConsole {
+    Class cls = NSClassFromString(@"YTCreationTimelineDebugConsole");
+    SEL shared = NSSelectorFromString(@"shared");
+    SEL toggle = NSSelectorFromString(@"toggleDebugMode");
+    Method factory = cls ? class_getClassMethod(cls, shared) : NULL;
+    Method toggleMethod = cls ? class_getInstanceMethod(cls, toggle) : NULL;
+    if (!factory || !toggleMethod ||
+        method_getNumberOfArguments(factory) != 2 ||
+        method_getNumberOfArguments(toggleMethod) != 2) {
+        YTABCShowNotice(self, @"Creation console unavailable",
+                        @"No usable YTCreationTimelineDebugConsole.shared class method.");
+        return;
+    }
+    @try {
+        id console = ((id (*)(id, SEL))objc_msgSend)(cls, shared);
+        if (!console || ![console respondsToSelector:toggle]) {
+            YTABCShowNotice(self, @"Creation console unavailable",
+                            @"The native console is not initialized or does not expose toggleDebugMode.");
+            return;
+        }
+        ((void (*)(id, SEL))objc_msgSend)(console, toggle);
+        YTABCShowNotice(self, @"Creation console",
+                        @"Called the native toggleDebugMode selector. "
+                        @"A visible console depends on YouTube's editor lifecycle.");
+    } @catch (NSException *e) {
+        YTABCShowNotice(self, @"Creation console error", e.reason);
+    }
+}
+
+- (void)showNativeStudyControls {
+    NSDictionary<NSString *, id> *snapshot = YTABCCopyNativeStudyControls() ?: @{};
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    for (NSString *key in [[snapshot allKeys] sortedArrayUsingSelector:@selector(compare:)])
+        [lines addObject:[NSString stringWithFormat:@"%@ = %@", key, snapshot[key]]];
+    [lines addObject:@"\nBadge and opt-in state are read from the most recently bound native study cell. No study rows means these values are not evidence of eligibility."];
+    if ([snapshot[@"studyCellEntryBindings"] unsignedIntegerValue] == 0)
+        [lines insertObject:@"NO NATIVE STUDY CELLS OBSERVED. Zero badge / opt-in counters are not evidence of eligibility.\n" atIndex:0];
+    YTABCPushDiagnosticsReport(self, @"Native study diagnostics",
+                              [lines componentsJoinedByString:@"\n"]);
+}
+
+- (void)showExperimentsHealth {
+    NSDictionary *ui = YTABCCopyNativeExperimentsHealth() ?: @{};
+    NSDictionary *network = YTABCCopyNativeDiagnostics() ?: @{};
+    NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithObject:
+        @"NATIVE VIEW CONTROLLER"];
+    for (NSString *key in [[ui allKeys] sortedArrayUsingSelector:@selector(compare:)]) {
+        [lines addObject:[NSString stringWithFormat:@"%@ = %@", key, ui[key]]];
+    }
+    [lines addObject:@"\nNATIVE EXPERIMENT SERVICE"];
+    for (NSString *key in @[@"nativeExperimentsServiceObserved", @"nativeSearchCalls",
+                             @"searchSuccessCallbacks", @"searchFailureCallbacks",
+                             @"lastSearchHTTPStatus", @"lastSearchErrorCode",
+                             @"lastSearchErrorDomain", @"lastSearchResponseClass",
+                             @"nativeOptInCalls", @"nativeOptOutCalls",
+                             @"nativeHasGooglerAccount", @"nativeIsInternalSyncer"]) {
+        if (network[key])
+            [lines addObject:[NSString stringWithFormat:@"%@ = %@", key, network[key]]];
+    }
+    [lines addObject:@"\nAn empty result does not identify a specific server gate. Check whether search ran and whether result sections arrived."];
+    if (![ui[@"rootCurrentlyAlive"] boolValue])
+        [lines insertObject:@"No living native experiments controller. Open the native launcher before retrying.\n" atIndex:0];
+    else if ([ui[@"makeSearchCalls"] unsignedIntegerValue] == 0)
+        [lines insertObject:@"A native controller was observed but no native experiment search call was observed.\n" atIndex:0];
+    else if ([ui[@"resultsAddSectionsCalls"] unsignedIntegerValue] == 0)
+        [lines insertObject:@"Native search was observed but no result-section update was observed.\n" atIndex:0];
+    YTABCPushDiagnosticsReport(self, @"Experiments diagnostics",
+                              [lines componentsJoinedByString:@"\n"]);
+}
+
+- (void)showEligibilityHealth {
+    NSDictionary *network = YTABCCopyNativeDiagnostics() ?: @{};
+    NSDictionary *ui = YTABCCopyNativeExperimentsHealth() ?: @{};
+    NSDictionary *studies = YTABCCopyNativeStudyControls() ?: @{};
+    id sections = nil;
+    @try { sections = [self.settingsOwner valueForKey:@"settingsSectionControllers"]; }
+    @catch (__unused NSException *exception) {}
+    if (![sections isKindOfClass:NSDictionary.class]) sections = @{};
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+
+    [lines addObject:@"SETTINGS DELIVERY"];
+    for (NSNumber *cat in @[@30, @37]) {
+        NSString *prefix = [NSString stringWithFormat:@"category%@", cat];
+        [lines addObject:[NSString stringWithFormat:
+            @"Category %@ — %@ | update calls: %@ | entry passed: %@",
+            cat, sections[cat] ? @"loaded" : @"not loaded",
+            network[[prefix stringByAppendingString:@"UpdateCalls"]] ?: @0,
+            network[[prefix stringByAppendingString:@"HadEntry"]] ?: @NO]];
+        [lines addObject:[NSString stringWithFormat:
+            @"Entry type %@ | hasNavigationEndpoint %@ | hasURLEndpoint %@",
+            network[[prefix stringByAppendingString:@"EntryClass"]] ?: @"not observed",
+            network[[prefix stringByAppendingString:@"HasNavigationEndpoint"]] ?: [NSNull null],
+            network[[prefix stringByAppendingString:@"HasURLEndpoint"]] ?: [NSNull null]]];
+    }
+    [lines addObject:@"Categories 30/37 are navigation-endpoint entries in the original YouTube 21.43.5 settings dispatcher. A missing loaded section cannot be fixed by revealing a header."];
+
+    [lines addObject:@"\nNATIVE IDENTITY / ELIGIBILITY SIGNALS"];
+    for (NSString *key in @[@"nativeGooglerCheckObserved", @"nativeHasGooglerAccount",
+                            @"nativeInternalCheckObserved", @"nativeIsInternalSyncer",
+                            @"forceHasGooglerAccount", @"forceIsGooglerAccount",
+                            @"forceStandardInternalSyncer"])
+        [lines addObject:[NSString stringWithFormat:@"%@ = %@", key,
+            network[key] ?: @"not observed"]];
+    [lines addObject:@"Local force flags do not grant account or server authorization."];
+
+    [lines addObject:@"\nNATIVE EXPERIMENT SERVICE"];
+    for (NSString *key in @[@"rootCurrentlyAlive", @"parentResponderWasNonNil",
+                             @"nativeTabControllerCount", @"makeSearchCalls",
+                             @"lastResultSectionCount"])
+        [lines addObject:[NSString stringWithFormat:@"%@ = %@", key,
+            ui[key] ?: @"not observed"]];
+    for (NSString *key in @[@"nativeExperimentsServiceObserved", @"nativeSearchCalls",
+                             @"searchSuccessCallbacks", @"searchFailureCallbacks",
+                             @"lastSearchErrorDomain", @"lastSearchErrorCode",
+                             @"lastSearchHTTPStatus", @"lastSearchResponseClass"])
+        [lines addObject:[NSString stringWithFormat:@"%@ = %@", key,
+            network[key] ?: @"not observed"]];
+
+    NSUInteger calls = [network[@"nativeSearchCalls"] unsignedIntegerValue];
+    NSUInteger ok = [network[@"searchSuccessCallbacks"] unsignedIntegerValue];
+    NSUInteger errors = [network[@"searchFailureCallbacks"] unsignedIntegerValue];
+    NSUInteger sectionsCount = [ui[@"lastResultSectionCount"] unsignedIntegerValue];
+    NSString *outcome = !calls ? @"No service request observed; investigate native controller and responder."
+        : errors && !ok ? @"Native service reported an error; inspect HTTP/status and error domain."
+        : ok && !sectionsCount ? @"Search succeeded but no result sections were observed; investigate empty/filtered response or result rendering."
+        : sectionsCount ? @"Result sections were delivered; inspect native study cell bindings."
+        : @"A request was observed but no completion callback yet; inspect request lifecycle.";
+    [lines addObject:[NSString stringWithFormat:@"\nDIAGNOSIS\n%@", outcome]];
+    [lines addObject:[NSString stringWithFormat:@"\nSTUDY UI\ninstalled hooks %@ | bound cells %@",
+        studies[@"installedStudyHooks"] ?: @0, studies[@"studyCellEntryBindings"] ?: @0]];
+    [lines addObject:@"Only sanitized counters, error domain/code and HTTP status are collected. No credentials or request payloads."];
+    YTABCPushDiagnosticsReport(self, @"Eligibility Diagnosis", [lines componentsJoinedByString:@"\n"]);
+}
+
+- (void)showInventory:(NSString *)kind {
+    NSArray<NSString *> *classes = @[];
+    NSString *title = @"Runtime inventory";
+    if ([kind isEqualToString:@"phenotype"]) {
+        title = @"Phenotype / Heterodyne";
+        classes = @[@"PHTPhenotype", @"PHTFlatFilePhenotype",
+                    @"PHTPhenotypeFlags", @"PHTPhenotypeFlagsSnapshot",
+                    @"PHTPhenotypeConfiguration", @"PHTHeterodyneSyncer",
+                    @"PHTInternalHeterodyneSyncer", @"PHTURL"];
+    } else if ([kind isEqualToString:@"developer"]) {
+        title = @"Developer / QA";
+        classes = @[@"YTSettingsGroupData", @"YTSettingsViewController",
+                    @"YTSettingsSectionItemManager", @"YTExperimentsEndpointCommandImpl",
+                    @"YTClientSideExperimentsController", @"PlayDeveloperConsole"];
+    } else if ([kind isEqualToString:@"config"]) {
+        title = @"YouTube configuration";
+        classes = @[@"YTColdConfig", @"YTHotConfig", @"YTGlobalConfig",
+                    @"YTColdConfigStorage", @"YTExperimentFlagIDBasedConfigImpl",
+                    @"YTExperimentsServiceImpl"];
+    } else if ([kind isEqualToString:@"lens"]) {
+        title = @"Lens debug provider";
+        classes = @[@"LNSDebugMenuSettingProvider",
+                    @"DisabledDebugMenuSettingProvider"];
+    } else if ([kind isEqualToString:@"watch"]) {
+        title = @"Watch debug";
+        classes = @[@"YTWatchDebugOverlayController",
+                    @"YTPlaybackDebugOverlayController"];
+    }
+    YTABCPushDiagnosticsReport(self, title,
+                    [NSString stringWithFormat:@"%@\n\n"
+                        @"Presence does not establish a launchable menu or permission.",
+                        YTABCClassReport(classes)]);
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    NSDictionary *entry = self.sections[(NSUInteger)indexPath.section][@"rows"]
+                                        [(NSUInteger)indexPath.row];
+    NSString *kind = entry[@"kind"];
+    id owner = self.settingsOwner;
+    if ([kind isEqualToString:@"eligibilityReport"]) {
+        [self showEligibilityHealth];
+    } else if ([kind isEqualToString:@"experimentsHealth"]) {
+        [self showExperimentsHealth];
+    } else if ([kind isEqualToString:@"studyControlsHealth"]) {
+        [self showNativeStudyControls];
+    } else if ([kind isEqualToString:@"experimentsRetry"]) {
+        BOOL queued = YTABCRetryNativeExperimentsSelectedTab();
+        YTABCShowNotice(self, @"Native experiments reload", queued
+            ? @"Called updateDataForTab: on the existing native selected tab. Check Health for changes."
+            : @"No live experiments root with a valid selected tab; use the original launcher first.");
+    } else if ([kind isEqualToString:@"studies"]) {
+        extern BOOL YTABCPushNativeExperiments(id);
+        if (!YTABCPushNativeExperiments(owner)) {
+            YTABCShowNotice(self, @"Native studies unavailable",
+                            @"The existing studies push opener could not launch the native screen.");
+        }
+    } else if ([kind isEqualToString:@"studiesModal"]) {
+        extern BOOL YTABCPresentNativeExperiments(id);
+        if (!YTABCPresentNativeExperiments(owner)) {
+            YTABCShowNotice(self, @"Native studies unavailable",
+                            @"The existing modal opener could not launch the native screen.");
+        }
+    } else if ([kind isEqualToString:@"controller"]) {
+        [self pushNativeController:entry[@"class"]];
+    } else if ([kind isEqualToString:@"configFlags"]) {
+        [self.navigationController pushViewController:
+            [[YTABRuntimeBrowserModernViewController alloc] initWithCategory:@"ColdConfig"]
+            animated:YES];
+    } else if ([kind isEqualToString:@"runtimeControls"]) {
+        [self.navigationController pushViewController:
+            [[YTABRuntimeBrowserModernViewController alloc] initWithInitialScope:0]
+            animated:YES];
+    } else if ([kind isEqualToString:@"runtimePhenotype"]) {
+        [self.navigationController pushViewController:
+            [[YTABRuntimeBrowserModernViewController alloc] initWithCategory:@"Phenotype"]
+            animated:YES];
+    } else if ([kind isEqualToString:@"settingsHidden"]) {
+        [self.navigationController pushViewController:
+            YTABCCreateSettingsRowsInspector(owner) animated:YES];
+    } else if ([kind isEqualToString:@"phenotypeResync"]) {
+        BOOL started = YTABCRunPhenotypeResync();
+        YTABCShowNotice(self, @"Native Phenotype sync", started
+            ? @"Native syncWithCallback: invoked. Completion and permissions still depend on the native service."
+            : @"No live native syncer with a verified ABI was observed.");
+    } else if ([kind isEqualToString:@"experimentsClearCaches"]) {
+        BOOL cleared = YTABCClearNativeExperimentsCaches();
+        YTABCShowNotice(self, @"Experiment cache", cleared
+            ? @"Native clearCaches invoked. Retry a tab to request fresh results."
+            : @"No compatible live experiment service was observed.");
+    } else if ([kind isEqualToString:@"playback"]) {
+        [self togglePlaybackOverlay];
+    } else if ([kind isEqualToString:@"creation"]) {
+        [self toggleCreationConsole];
+    } else {
+        [self showInventory:kind];
+    }
+}
+
+@end
+
+static BOOL YTABCPushNativeMenuHubWithMode(id settingsViewController, NSString *mode) {
+    if (![NSThread isMainThread]) {
+        NSLog(@"[YTABC NativeMenus] Refusing off-main UIKit navigation");
+        return NO;
+    }
+    YTABCInstallNativeMenuObservationHooks();
+    if (!settingsViewController) return NO;
+    // Keep study hooks out of %ctor / cold start.
+    YTABCInstallNativeStudyControlsHooks();
+    YTABCNativeMenusViewController *menu =
+        [[YTABCNativeMenusViewController alloc] initWithSettingsOwner:settingsViewController mode:mode];
+    SEL push = NSSelectorFromString(@"pushViewController:");
+    @try {
+        if ([settingsViewController respondsToSelector:push]) {
+            ((void (*)(id, SEL, UIViewController *))objc_msgSend)(
+                settingsViewController, push, menu);
+            return YES;
+        }
+        if ([settingsViewController isKindOfClass:[UIViewController class]]) {
+            UINavigationController *nav =
+                [(UIViewController *)settingsViewController navigationController];
+            if (nav) {
+                [nav pushViewController:menu animated:YES];
+                return YES;
+            }
+        }
+    } @catch (NSException *e) {
+        NSLog(@"[YTABC NativeMenus] Navigation failed: %@", e.reason);
+    }
+    return NO;
+}
+
+BOOL YTABCPushNativeMenuHub(id settingsViewController) {
+    return YTABCPushNativeMenuHubWithMode(settingsViewController, nil);
+}
+
+BOOL YTABCPushNativeMenuHubForCategory(id settingsViewController, NSString *category) {
+    return YTABCPushNativeMenuHubWithMode(settingsViewController, category);
+}

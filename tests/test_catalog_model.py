@@ -1,5 +1,7 @@
 import copy
+import json
 import unittest
+from pathlib import Path
 
 from tools.catalog_model import (
     ContractError,
@@ -223,6 +225,28 @@ class CatalogModelTests(unittest.TestCase):
     def test_dump_json_is_stable_and_newline_terminated(self):
         document = {"z": 1, "a": [2]}
         self.assertEqual(dump_json(document), '{\n  "a": [\n    2\n  ],\n  "z": 1\n}\n')
+
+    def test_bundled_seed_matches_current_curated_youtube_version(self):
+        root = Path(__file__).parents[1]
+        curated = json.loads(
+            (root / "catalog/curated/youtube-21.30.5.json").read_text()
+        )
+        bundled = json.loads(
+            (
+                root
+                / "layout/Library/Application Support/YTABC.bundle"
+                / "YTABCatalog-v1.json"
+            ).read_text()
+        )
+
+        self.assertEqual(bundled, curated)
+        self.assertEqual(bundled["youtubeVersion"], "21.30.5")
+        keys = [
+            (record["class"], record["selector"])
+            for record in bundled["records"]
+        ]
+        self.assertEqual(len(keys), 6)
+        self.assertEqual(len(keys), len(set(keys)))
 
 
 if __name__ == "__main__":

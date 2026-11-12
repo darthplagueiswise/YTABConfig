@@ -7,15 +7,15 @@ else
 endif
 INSTALL_TARGET_PROCESSES = YouTube
 ARCHS = arm64
-PACKAGE_VERSION = 2.0.0
+PACKAGE_VERSION = 2.0.6
 
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = YTABConfig
 
-$(TWEAK_NAME)_FILES = Settings.x Tweak.x RuntimeFlagRegistry.m YTABLabUI.m YTABCatalogProvider.m
+$(TWEAK_NAME)_FILES = Settings.x Tweak.x RuntimeFlagRegistry.m YTABLabUI.m YTABCatalogProvider.m YTNativeExperiments.x YTABCNativeMenus.m YTABCSettingsRowsInspector.m YTABNativeDiagnostics.m YTABNativeExperimentsHealth.m YTABNativeStudyControls.m YTABCoreDataModelCompatibility.m YTABRuntimeBrowser.m YTABRuntimeBrowserModern.m YTABRuntimeBrowserHooks.x YTABRuntimeBrowserEntry.x
 $(TWEAK_NAME)_CFLAGS = -fobjc-arc -DTWEAK_VERSION=$(PACKAGE_VERSION)
-$(TWEAK_NAME)_FRAMEWORKS = UIKit
+$(TWEAK_NAME)_FRAMEWORKS = UIKit CoreData
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 

@@ -1,10 +1,10 @@
 #import "YTABLabUI.h"
 #import "RuntimeFlagRegistry.h"
 
-extern NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *YTABCopyRuntimeValues(void);
+extern NSDictionary<NSString *, NSDictionary<NSString *, id> *> *YTABCopyRuntimeValues(void);
 extern NSDictionary<NSString *, NSNumber *> *YTABCopyOverrideValues(void);
 extern BOOL YTABResetRuntimeOverride(NSString *sourceClass, NSString *selector, BOOL nativeValue);
-extern BOOL YTABResetAllRuntimeOverrides(NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *nativeValues);
+extern BOOL YTABResetAllRuntimeOverrides(NSDictionary<NSString *, NSDictionary<NSString *, id> *> *nativeValues);
 
 #define YTAB_STRINGIFY_INNER(value) #value
 #define YTAB_STRINGIFY(value) YTAB_STRINGIFY_INNER(value)
@@ -113,7 +113,11 @@ static NSString *YTABExportTimestamp(void) {
 
 static void YTABConfigureSelfSizingTable(UITableView *tableView) {
     tableView.rowHeight = UITableViewAutomaticDimension;
-    tableView.estimatedRowHeight = 76.0;
+    tableView.estimatedRowHeight = 78.0;
+    tableView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentAutomatic;
+    tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
+    tableView.backgroundColor = UIColor.systemGroupedBackgroundColor;
+    if (@available(iOS 15.0, *)) tableView.sectionHeaderTopPadding = 8.0;
 }
 
 static NSString *YTABReadableTitle(NSString *selector) {
@@ -161,7 +165,6 @@ static NSString *YTABReadableTitle(NSString *selector) {
 
 @interface YTABLegacyRuntimeAdapter ()
 @property(nonatomic, strong) id<YTABLabCatalogProviding> catalog;
-@property(nonatomic, copy) NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *nativeValues;
 @end
 
 @implementation YTABLegacyRuntimeAdapter
@@ -170,7 +173,6 @@ static NSString *YTABReadableTitle(NSString *selector) {
     self = [super init];
     if (self) {
         _catalog = catalog;
-        _nativeValues = [YTABCopyRuntimeValues() copy] ?: @{};
     }
     return self;
 }
@@ -201,7 +203,7 @@ static NSString *YTABReadableTitle(NSString *selector) {
 }
 
 - (NSArray<YTABLabFlag *> *)allFlags {
-    NSDictionary *runtime = self.nativeValues ?: @{};
+    NSDictionary *runtime = YTABCopyRuntimeValues() ?: @{};
     NSDictionary *overrides = YTABCopyOverrideValues() ?: @{};
     NSMutableArray<YTABLabFlag *> *flags = [NSMutableArray array];
     NSMutableSet<NSString *> *runtimeKeys = [NSMutableSet set];
@@ -213,10 +215,11 @@ static NSString *YTABReadableTitle(NSString *selector) {
         for (NSString *selector in selectors) {
             NSString *fullKey = [NSString stringWithFormat:@"%@.%@", sourceClass, selector];
             [runtimeKeys addObject:fullKey];
+            NSNumber *native = YTABValidOverrideNumber(methods[selector]);
             NSNumber *override = YTABValidOverrideNumber(overrides[[YTABPreferencePrefix stringByAppendingString:fullKey]]);
             [flags addObject:[self flagForSelector:selector
                                       sourceClass:sourceClass
-                                      nativeValue:methods[selector]
+                                      nativeValue:native
                                      overrideValue:override
                                           removed:NO]];
         }
@@ -258,22 +261,23 @@ static NSString *YTABReadableTitle(NSString *selector) {
 }
 
 - (BOOL)resetAllOverrides {
-    return YTABResetAllRuntimeOverrides(self.nativeValues ?: @{});
+    return YTABResetAllRuntimeOverrides(YTABCopyRuntimeValues() ?: @{});
 }
 
 - (YTABLabFlag *)refreshedFlagMatchingFlag:(YTABLabFlag *)flag {
     if (!flag) return nil;
-    NSNumber *native = self.nativeValues[flag.sourceClass][flag.rawSelector];
+    BOOL live = YTABCRuntimeHasFlag(flag.sourceClass, flag.rawSelector);
+    NSNumber *native = live ? YTABCNativeValue(flag.sourceClass, flag.rawSelector) : nil;
     NSString *preferenceKey = [YTABPreferencePrefix stringByAppendingFormat:@"%@.%@", flag.sourceClass, flag.rawSelector];
-    NSNumber *override = native
+    NSNumber *override = live
         ? YTABCOverrideValue(flag.sourceClass, flag.rawSelector)
         : YTABValidOverrideNumber(YTABCopyOverrideValues()[preferenceKey]);
-    if (!native && !override) return nil;
+    if (!live && !override) return nil;
     return [self flagForSelector:flag.rawSelector
                     sourceClass:flag.sourceClass
                     nativeValue:native
                    overrideValue:override
-                        removed:native == nil];
+                        removed:!live];
 }
 
 - (NSString *)exportText {
@@ -449,7 +453,7 @@ static NSString *YTABReadableTitle(NSString *selector) {
     for (NSString *key in pendingValues) {
         YTABLabFlag *flag = flagsByKey[key];
         BOOL value = pendingValues[key].boolValue;
-        if ((!flag.hasOverride && flag.nativeValue == value) ||
+        if ((!flag.hasOverride && flag.hasNativeValue && flag.nativeValue == value) ||
             (flag.hasOverride && flag.effectiveValue == value)) continue;
         if ([self setOverrideValue:value forFlag:flag]) imported++;
     }
@@ -470,6 +474,7 @@ static NSString *YTABReadableTitle(NSString *selector) {
 @property(nonatomic, copy) NSArray<YTABLabFlag *> *flags;
 @property(nonatomic, copy) NSArray<YTABLabFlag *> *visibleFlags;
 @property(nonatomic, strong) UISearchController *searchController;
+@property(nonatomic) BOOL ytab_activateSearchOnAppearance;
 - (instancetype)initWithProvider:(id<YTABLabRuntimeProviding>)provider
                             mode:(YTABLabListMode)mode
                            title:(NSString *)title
@@ -495,7 +500,7 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
                             mode:(YTABLabListMode)mode
                            title:(NSString *)title
                      beginSearch:(BOOL)beginSearch {
-    self = [super initWithStyle:UITableViewStyleGrouped];
+    self = [super initWithStyle:UITableViewStyleInsetGrouped];
     if (self) {
         _provider = provider;
         _mode = mode;
@@ -505,14 +510,18 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
         _searchController.obscuresBackgroundDuringPresentation = NO;
         _searchController.searchBar.placeholder = @"Readable title or raw selector";
         self.navigationItem.searchController = _searchController;
-        self.navigationItem.hidesSearchBarWhenScrolling = !beginSearch;
-        self.definesPresentationContext = YES;
-        if (beginSearch) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                self.searchController.active = YES;
-                [self.searchController.searchBar becomeFirstResponder];
-            });
+        // Persistent top search (iOS 26/27); never collapse the bar on scroll.
+        self.navigationItem.hidesSearchBarWhenScrolling = NO;
+        if (@available(iOS 26.0, *)) {
+            self.navigationItem.preferredSearchBarPlacement =
+                UINavigationItemSearchBarPlacementIntegratedButton;
+            self.navigationItem.searchBarPlacementAllowsToolbarIntegration = NO;
+        } else if (@available(iOS 16.0, *)) {
+            self.navigationItem.preferredSearchBarPlacement =
+                UINavigationItemSearchBarPlacementStacked;
         }
+        self.definesPresentationContext = YES;
+        _ytab_activateSearchOnAppearance = beginSearch;
     }
     return self;
 }
@@ -520,11 +529,22 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
 - (void)viewDidLoad {
     [super viewDidLoad];
     YTABConfigureSelfSizingTable(self.tableView);
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     [self reloadFlags];
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    // Search presentation is only valid once the list is in a live window.
+    if (self.ytab_activateSearchOnAppearance) {
+        self.ytab_activateSearchOnAppearance = NO;
+        self.searchController.active = YES;
+        [self.searchController.searchBar becomeFirstResponder];
+    }
 }
 
 - (void)reloadFlags {
@@ -595,21 +615,35 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
     static NSString *identifier = @"YTABLabFlagCell";
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:identifier];
     if (!cell) cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:identifier];
-    YTABLabFlag *flag = self.visibleFlags[indexPath.row];
+    YTABLabFlag *flag = YTABRefreshedFlag(self.provider, self.visibleFlags[indexPath.row]);
     cell.textLabel.text = flag.readableTitle;
     cell.textLabel.numberOfLines = 2;
+    cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+    cell.textLabel.adjustsFontForContentSizeCategory = YES;
+    cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
+    cell.detailTextLabel.adjustsFontForContentSizeCategory = YES;
     NSString *native = flag.hasNativeValue ? [NSString stringWithFormat:@"Native %@", YTABBooleanText(flag.nativeValue)] : @"Native unavailable";
     NSString *effective = flag.hasEffectiveValue
         ? [NSString stringWithFormat:@"Effective %@", YTABBooleanText(flag.effectiveValue)]
         : @"Effective unavailable";
-    cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ • %@ / %@\n%@ · %@",
-        flag.status, flag.category, flag.risk, native, effective];
-    cell.detailTextLabel.numberOfLines = 2;
+    NSString *overrideState = flag.hasOverride
+        ? (flag.effectiveValue ? @"Override ON" : @"Override OFF")
+        : @"System";
+    cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ • %@ / %@\n%@ · %@ · %@",
+        flag.status, flag.category, flag.risk, native, effective, overrideState];
+    cell.detailTextLabel.numberOfLines = 3;
     cell.selectionStyle = UITableViewCellSelectionStyleDefault;
 
-    UIView *accessory = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 122, 32)];
+    // Keep the toggle readable on compact iPhones and expose Reset only
+    // while an actual override exists; don't reserve wasted space in every row.
+    CGFloat accessoryWidth = flag.hasOverride ? 120.0 : 60.0;
+    UIView *accessory = [[UIView alloc] initWithFrame:CGRectMake(0, 0, accessoryWidth, 38)];
     UIButton *reset = [UIButton buttonWithType:UIButtonTypeSystem];
-    reset.frame = CGRectMake(0, 0, 58, 32);
+    reset.frame = CGRectMake(0, 1, 56, 36);
+    if (@available(iOS 26.0, *))
+        reset.configuration = [UIButtonConfiguration glassButtonConfiguration];
+    else if (@available(iOS 15.0, *))
+        reset.configuration = [UIButtonConfiguration tintedButtonConfiguration];
     [reset setTitle:@"Reset" forState:UIControlStateNormal];
     reset.enabled = flag.hasOverride;
     reset.alpha = flag.hasOverride ? 1.0 : 0.35;
@@ -620,10 +654,12 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
         : [NSString stringWithFormat:@"Restores the native value for %@.%@",
             flag.sourceClass, flag.rawSelector];
     [reset addTarget:self action:@selector(resetTapped:) forControlEvents:UIControlEventTouchUpInside];
-    [accessory addSubview:reset];
-    UISwitch *toggle = [[UISwitch alloc] initWithFrame:CGRectMake(64, 0, 58, 32)];
+    if (flag.hasOverride) [accessory addSubview:reset];
+    UISwitch *toggle = [[UISwitch alloc] initWithFrame:CGRectMake(
+        flag.hasOverride ? 64 : 2, 2, 58, 34)];
+    toggle.onTintColor = flag.hasOverride ? UIColor.systemBlueColor : UIColor.systemGreenColor;
     toggle.on = flag.effectiveValue;
-    toggle.enabled = !flag.removed;
+    toggle.enabled = !flag.removed && flag.hasEffectiveValue;
     toggle.accessibilityLabel = [NSString stringWithFormat:@"Override %@", flag.readableTitle];
     toggle.accessibilityValue = flag.hasEffectiveValue ? YTABBooleanText(flag.effectiveValue) : @"Unavailable";
     toggle.accessibilityHint = [NSString stringWithFormat:@"Changes %@.%@", flag.sourceClass, flag.rawSelector];
@@ -666,7 +702,7 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
 @implementation YTABLabDetailViewController
 
 - (instancetype)initWithFlag:(YTABLabFlag *)flag provider:(id<YTABLabRuntimeProviding>)provider {
-    self = [super initWithStyle:UITableViewStyleGrouped];
+    self = [super initWithStyle:UITableViewStyleInsetGrouped];
     if (self) {
         _flag = flag;
         _provider = provider;
@@ -678,6 +714,7 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
 - (void)viewDidLoad {
     [super viewDidLoad];
     YTABConfigureSelfSizingTable(self.tableView);
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -704,7 +741,9 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
 - (UITableViewCell *)detailCellWithTitle:(NSString *)title value:(NSString *)value {
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     cell.textLabel.text = title;
+    cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
     cell.detailTextLabel.text = value;
+    cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
     cell.detailTextLabel.numberOfLines = 0;
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
     return cell;
@@ -732,6 +771,7 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
             UITableViewCell *cell = [self detailCellWithTitle:@"Override value"
                                                        value:flag.hasOverride ? YTABBooleanText(flag.effectiveValue) : @"Not set"];
             UISwitch *toggle = [UISwitch new];
+            toggle.onTintColor = flag.hasOverride ? UIColor.systemBlueColor : UIColor.systemGreenColor;
             toggle.on = flag.effectiveValue;
             toggle.enabled = !flag.removed;
             toggle.accessibilityLabel = [NSString stringWithFormat:@"Override %@", flag.readableTitle];
@@ -788,7 +828,7 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
 @implementation YTABLabDashboardViewController
 
 - (instancetype)initWithProvider:(id<YTABLabRuntimeProviding>)provider {
-    self = [super initWithStyle:UITableViewStyleGrouped];
+    self = [super initWithStyle:UITableViewStyleInsetGrouped];
     if (self) {
         _provider = provider;
         self.title = @"Feature Lab";
@@ -799,6 +839,7 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
 - (void)viewDidLoad {
     [super viewDidLoad];
     YTABConfigureSelfSizingTable(self.tableView);
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -841,8 +882,12 @@ static YTABLabFlag *YTABRefreshedFlag(id<YTABLabRuntimeProviding> provider, YTAB
 - (UITableViewCell *)navigationCellWithTitle:(NSString *)title subtitle:(NSString *)subtitle {
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     cell.textLabel.text = title;
+    cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    cell.textLabel.adjustsFontForContentSizeCategory = YES;
     cell.detailTextLabel.text = subtitle;
-    cell.detailTextLabel.numberOfLines = 2;
+    cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    cell.detailTextLabel.adjustsFontForContentSizeCategory = YES;
+    cell.detailTextLabel.numberOfLines = 3;
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     return cell;
 }

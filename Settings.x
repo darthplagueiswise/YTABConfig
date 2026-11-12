@@ -11,6 +11,11 @@
 #import "RuntimeFlagRegistry.h"
 #import "YTABCatalogProvider.h"
 #import "YTABLabUI.h"
+#import "YTABCNativeMenus.h"
+extern void YTABCInstallNativeDiagnostics(void);
+extern BOOL YTABCRunPhenotypeResync(void);
+extern BOOL YTABCClearNativeExperimentsCaches(void);
+extern NSDictionary<NSString *, id> *YTABCCopyNativeDiagnostics(void);
 
 #define Prefix @"YTABC"
 #define EnabledKey @"EnabledYTABC"
@@ -20,14 +25,48 @@
 #define LOC(x) _LOC(tweakBundle, x)
 
 static const NSInteger YTABCSection = 404;
+static NSString * const KeyFormatString = @"%@.%@";
+static NSString * const FullKeyFormatString = @"%@.%@.%@";
 
 @interface YTSettingsSectionItemManager (YTABConfig)
 - (void)updateYTABCSectionWithEntry:(id)entry;
 @end
 
-extern NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *cache;
 NSUserDefaults *defaults;
+extern NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *cache;
+extern BOOL YTABCPushNativeExperiments(id settingsViewController);
+extern BOOL YTABCPresentNativeExperiments(id settingsViewController);
+NSSet<NSString *> *allKeysSet;
+BOOL allKeysNeedsUpdate = YES;
 pthread_mutex_t cacheMutex;
+NSMutableDictionary<NSString *, NSString *> *keyCache;
+NSUInteger prefixLength;
+
+static YTSettingsSectionItem *YTABCDiagnosticsSwitch(
+    Class itemClass, NSString *title, NSString *detail, NSString *identifier, NSString *defaultsKey
+) {
+    return [(id)itemClass switchItemWithTitle:title
+        titleDescription:detail
+        accessibilityIdentifier:identifier
+        switchOn:[[NSUserDefaults standardUserDefaults] boolForKey:defaultsKey]
+        switchBlock:^BOOL (YTSettingsCell *cell, BOOL enabled) {
+            (void)cell;
+            [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:defaultsKey];
+            YTABCInstallNativeDiagnostics();
+            return YES;
+        }
+        settingItemId:0];
+}
+
+static void YTABCShowTestResult(UIViewController *presenter, NSString *title, BOOL success,
+                                NSString *successMessage, NSString *failureMessage) {
+    if (!presenter) return;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
+        message:(success ? successMessage : failureMessage)
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [presenter presentViewController:alert animated:YES completion:nil];
+}
 
 BOOL tweakEnabled() {
     return [defaults boolForKey:EnabledKey];
@@ -48,7 +87,44 @@ NSBundle *YTABCBundle() {
 }
 
 NSString *getKey(NSString *method, NSString *classKey) {
-    return [NSString stringWithFormat:@"%@.%@.%@", Prefix, classKey, method];
+    NSString *cacheKey =
+        [NSString stringWithFormat:KeyFormatString, classKey, method];
+    pthread_mutex_lock(&cacheMutex);
+    NSString *fullKey = keyCache[cacheKey];
+    if (!fullKey) {
+        fullKey = [NSString stringWithFormat:FullKeyFormatString,
+                   Prefix, classKey, method];
+        keyCache[cacheKey] = fullKey;
+    }
+    pthread_mutex_unlock(&cacheMutex);
+    return fullKey;
+}
+
+BOOL getValue(NSString *methodKey) {
+    if (!methodKey) return NO;
+    pthread_mutex_lock(&cacheMutex);
+    BOOL contains = [allKeysSet containsObject:methodKey];
+    BOOL result = NO;
+    if (!contains) {
+        NSString *keyPath =
+            [methodKey substringFromIndex:prefixLength + 1];
+        id value = [cache valueForKeyPath:keyPath];
+        result = value ? [value boolValue] : NO;
+    } else {
+        result = [defaults boolForKey:methodKey];
+    }
+    pthread_mutex_unlock(&cacheMutex);
+    return result;
+}
+
+void updateAllKeys(void) {
+    pthread_mutex_lock(&cacheMutex);
+    if (allKeysNeedsUpdate) {
+        allKeysSet =
+            [NSSet setWithArray:defaults.dictionaryRepresentation.allKeys];
+        allKeysNeedsUpdate = NO;
+    }
+    pthread_mutex_unlock(&cacheMutex);
 }
 
 static BOOL YTABCParseRuntimeKey(NSString *runtimeKey, NSString **classKey, NSString **selector) {
@@ -62,14 +138,8 @@ static BOOL YTABCParseRuntimeKey(NSString *runtimeKey, NSString **classKey, NSSt
     return YES;
 }
 
-NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *YTABCopyRuntimeValues() {
-    pthread_mutex_lock(&cacheMutex);
-    NSMutableDictionary *snapshot = [NSMutableDictionary dictionaryWithCapacity:cache.count];
-    [cache enumerateKeysAndObjectsUsingBlock:^(NSString *classKey, NSDictionary *methods, BOOL *stop) {
-        snapshot[classKey] = [methods copy];
-    }];
-    pthread_mutex_unlock(&cacheMutex);
-    return [snapshot copy];
+NSDictionary<NSString *, NSDictionary<NSString *, id> *> *YTABCopyRuntimeValues() {
+    return YTABCRuntimeValuesSnapshot();
 }
 
 static BOOL YTABCValidOverrideNumber(id value) {
@@ -105,7 +175,7 @@ BOOL YTABResetRuntimeOverride(NSString *sourceClass, NSString *selector, BOOL na
 }
 
 BOOL YTABResetAllRuntimeOverrides(
-    NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *nativeValues
+    NSDictionary<NSString *, NSDictionary<NSString *, id> *> *nativeValues
 ) {
     (void)nativeValues;
     NSDictionary *representation = [defaults dictionaryRepresentation];
@@ -195,13 +265,20 @@ BOOL YTABResetAllRuntimeOverrides(
 
 %end
 
+// The section-item manager owns the real _dataDelegate used to publish
+// category headers/items. Keep only a weak reference for the optional local
+// reveal controller; never instantiate or fabricate a manager.
+static __weak id sYTABCLiveSectionItemManager;
+id YTABCLiveSettingsSectionItemManager(void) {
+    return sYTABCLiveSectionItemManager;
+}
+
 %hook YTSettingsSectionItemManager
 
 %new(v@:@)
 - (void)updateYTABCSectionWithEntry:(id)entry {
     (void)entry;
     NSMutableArray *sectionItems = [NSMutableArray array];
-    int totalSettings = 0;
     NSBundle *tweakBundle = YTABCBundle();
     NSString *yesText = _LOC([NSBundle mainBundle], @"settings.yes");
     NSString *cancelText = _LOC([NSBundle mainBundle], @"confirm.cancel");
@@ -209,9 +286,6 @@ BOOL YTABResetAllRuntimeOverrides(
     Class YTAlertViewClass = %c(YTAlertView);
 
     if (tweakEnabled()) {
-        NSDictionary *runtimeValues = YTABCopyRuntimeValues();
-        for (NSDictionary *methods in runtimeValues.allValues) totalSettings += methods.count;
-
         __block YTSettingsViewController *settingsViewController = nil;
         @try {
             settingsViewController = [self valueForKey:@"_settingsViewControllerDelegate"];
@@ -228,6 +302,10 @@ BOOL YTABResetAllRuntimeOverrides(
                     NSLog(@"[YTABConfig Settings] Cannot open Feature Lab without a settings delegate");
                     return NO;
                 }
+                NSUInteger liveFlagCount = YTABCRuntimeDiscoverFlags();
+                if (liveFlagCount == 0) {
+                    NSLog(@"[YTABConfig Runtime] Feature Lab opened without a live flag surface");
+                }
                 id<YTABLabCatalogProviding> catalog = [[YTABCatalogProvider alloc]
                     initWithBundle:YTABCBundle()
                     youtubeVersion:[%c(YTVersionUtils) appVersion]];
@@ -239,6 +317,183 @@ BOOL YTABResetAllRuntimeOverrides(
                 return YES;
             }];
         [sectionItems addObject:featureLab];
+
+        // Four prominent, working destinations inside YouTube Settings.
+        // Original native experiments are a real controller; Debug/Configs
+        // are audited local navigation hubs; Hidden Rows opens the actual
+        // live YTSettingsSectionController inventory, not synthetic rows.
+        NSArray<NSDictionary<NSString *, NSString *> *> *nativeQuickMenus = @[
+            @{@"title": @"Native Experiments — search & studies",
+              @"subtitle": @"Open the original YTSettingsExperimentsViewController and its native tabs",
+              @"route": @"experiments"},
+            @{@"title": @"Debug & QA tools",
+              @"subtitle": @"Native playback overlay, editor console, and developer diagnostics",
+              @"route": @"debug"},
+            @{@"title": @"Native Configs / Phenotype",
+              @"subtitle": @"Captured Global/Cold/Hot flags and Phenotype inventory",
+              @"route": @"configs"},
+            @{@"title": @"Hidden Settings rows",
+              @"subtitle": @"Inspect real settings categories, headers and loaded rows",
+              @"route": @"hidden"}
+        ];
+        for (NSDictionary<NSString *, NSString *> *entry in nativeQuickMenus) {
+            NSString *route = [entry[@"route"] copy];
+            YTSettingsSectionItem *action = [YTSettingsSectionItemClass
+                itemWithTitle:entry[@"title"]
+                titleDescription:entry[@"subtitle"]
+                accessibilityIdentifier:[@"YTABC_NATIVE_QUICK_" stringByAppendingString:
+                    route.uppercaseString]
+                detailTextBlock:nil
+                selectBlock:^BOOL (__unused YTSettingsCell *cell, __unused NSUInteger index) {
+                    if (!settingsViewController) return NO;
+                    if ([route isEqualToString:@"experiments"])
+                        return YTABCPushNativeExperiments(settingsViewController);
+                    return YTABCPushNativeMenuHubForCategory(settingsViewController, route);
+                }];
+            [sectionItems addObject:action];
+        }
+
+        YTSettingsSectionItem *nativeExpPush = [YTSettingsSectionItemClass itemWithTitle:@"Open native experiments (push)"
+            titleDescription:@"Force-open via pushViewController: on the settings nav (orphaned VC, server-driven)"
+            accessibilityIdentifier:@"YTABC_NATIVE_EXPERIMENTS_PUSH"
+            detailTextBlock:nil
+            selectBlock:^BOOL (YTSettingsCell *cell, NSUInteger arg1) {
+                if (!settingsViewController) {
+                    NSLog(@"[YTABConfig Settings] Cannot open native experiments without a settings delegate");
+                    return NO;
+                }
+                return YTABCPushNativeExperiments(settingsViewController);
+            }];
+        [sectionItems addObject:nativeExpPush];
+
+        YTSettingsSectionItem *nativeExpModal = [YTSettingsSectionItemClass itemWithTitle:@"Open native experiments (modal / FBTweak)"
+            titleDescription:@"Force-open modally in a fresh nav with a Done button (FBTweak opener style)"
+            accessibilityIdentifier:@"YTABC_NATIVE_EXPERIMENTS_MODAL"
+            detailTextBlock:nil
+            selectBlock:^BOOL (YTSettingsCell *cell, NSUInteger arg1) {
+                if (!settingsViewController) {
+                    NSLog(@"[YTABConfig Settings] Cannot open native experiments without a settings delegate");
+                    return NO;
+                }
+                return YTABCPresentNativeExperiments(settingsViewController);
+            }];
+        [sectionItems addObject:nativeExpModal];
+
+        // Native 21.43.5 debugger/experiments hub. Instantiation is always
+        // user-driven, and unavailable native controllers are diagnosed in UI.
+        YTSettingsSectionItem *nativeTools = [YTSettingsSectionItemClass
+            itemWithTitle:@"Open YouTube native tools"
+            titleDescription:@"Native studies, search, results, playback and editor debug; read-only Phenotype/QA inventory"
+            accessibilityIdentifier:@"YTABC_NATIVE_TOOLS_OPEN"
+            detailTextBlock:nil
+            selectBlock:^BOOL (YTSettingsCell *cell, NSUInteger argument) {
+                (void)cell;
+                (void)argument;
+                if (!settingsViewController) {
+                    NSLog(@"[YTABC NativeMenus] Settings responder unavailable");
+                    return NO;
+                }
+                BOOL opened = YTABCPushNativeMenuHub(settingsViewController);
+                if (!opened) {
+                    YTABCShowTestResult(settingsViewController,
+                        @"Native tools navigation", NO, @"",
+                        @"This build's settings navigator could not open the local native tools hub.");
+                }
+                return opened;
+            }];
+        [sectionItems addObject:nativeTools];
+
+        // Three independent local-only Phenotype overrides. These switches
+        // return YES from the selected Objective-C getter while enabled,
+        // and return the native result when disabled. No network hooks.
+        [sectionItems addObject:YTABCDiagnosticsSwitch(YTSettingsSectionItemClass,
+            @"Force isGooglerAccount: (local)",
+            @"Override this per-account Phenotype getter to YES. Default OFF; native result when OFF.",
+            @"YTABC_FORCE_IS_GOOGLER_LOCAL", @"YTABCForceIsGooglerAccount")];
+        [sectionItems addObject:YTABCDiagnosticsSwitch(YTSettingsSectionItemClass,
+            @"Force hasGooglerAccount (local)",
+            @"Override this aggregate Phenotype getter to YES. Default OFF; native result when OFF.",
+            @"YTABC_FORCE_HAS_GOOGLER_LOCAL", @"YTABCForceHasGooglerAccount")];
+        [sectionItems addObject:YTABCDiagnosticsSwitch(YTSettingsSectionItemClass,
+            @"Force isInternalHeterodyneSyncer (local)",
+            @"Override this local internal-syncer getter to YES. Default OFF; native result when OFF.",
+            @"YTABC_FORCE_INTERNAL_SYNCER_LOCAL", @"YTABCForceStandardInternalSyncer")];
+
+        // Native diagnostics keep the original and effective values separate.
+        [sectionItems addObject:YTABCDiagnosticsSwitch(YTSettingsSectionItemClass,
+            @"Trace native Phenotype sync and classification",
+            @"Observe genuine Googler/internal checks and Heterodyne sync events. No account or token overrides.",
+            @"YTABC_TRACE_NATIVE_PHENOTYPE", @"YTABCTracePhenotype")];
+        [sectionItems addObject:YTABCDiagnosticsSwitch(YTSettingsSectionItemClass,
+            @"Trace native experiment search",
+            @"Log InnerTube experiment search invocation without request bodies or auth data.",
+            @"YTABC_TRACE_NATIVE_SEARCH", @"YTABCTraceExperimentsSearch")];
+        [sectionItems addObject:YTABCDiagnosticsSwitch(YTSettingsSectionItemClass,
+            @"Trace native experiment opt-in",
+            @"Log genuine opt-in request invocation without altering the request.",
+            @"YTABC_TRACE_NATIVE_OPTIN", @"YTABCTraceExperimentsOptIn")];
+        [sectionItems addObject:YTABCDiagnosticsSwitch(YTSettingsSectionItemClass,
+            @"Trace native experiment opt-out",
+            @"Log genuine opt-out request invocation without altering the request.",
+            @"YTABC_TRACE_NATIVE_OPTOUT", @"YTABCTraceExperimentsOptOut")];
+
+        YTSettingsSectionItem *nativeStatus = [YTSettingsSectionItemClass
+            itemWithTitle:@"Native Phenotype / Experiments status"
+            titleDescription:@"Show observed native/effective toggles, call counts and installed hooks"
+            accessibilityIdentifier:@"YTABC_NATIVE_DIAGNOSTIC_STATUS"
+            detailTextBlock:nil
+            selectBlock:^BOOL (YTSettingsCell *cell, NSUInteger argument) {
+                (void)cell; (void)argument;
+                NSDictionary *snapshot = YTABCCopyNativeDiagnostics();
+                NSArray *sortedKeys = [[snapshot allKeys] sortedArrayUsingSelector:@selector(compare:)];
+                NSMutableArray *lines = [NSMutableArray array];
+                for (NSString *key in sortedKeys)
+                    [lines addObject:[NSString stringWithFormat:@"%@ = %@", key, snapshot[key]]];
+                UIAlertController *alert = [UIAlertController
+                    alertControllerWithTitle:@"Native diagnostic state"
+                    message:[lines componentsJoinedByString:@"\n"]
+                    preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"OK"
+                    style:UIAlertActionStyleDefault handler:nil]];
+                [settingsViewController presentViewController:alert animated:YES completion:nil];
+                return YES;
+            }];
+        [sectionItems addObject:nativeStatus];
+
+        YTSettingsSectionItem *nativeResync = [YTSettingsSectionItemClass
+            itemWithTitle:@"Run native Phenotype resync"
+            titleDescription:@"Use only the actual syncer observed on the original Heterodyne path"
+            accessibilityIdentifier:@"YTABC_NATIVE_PHENOTYPE_RESYNC"
+            detailTextBlock:nil
+            selectBlock:^BOOL (YTSettingsCell *cell, NSUInteger argument) {
+                (void)cell; (void)argument;
+                BOOL issued = YTABCRunPhenotypeResync();
+                YTABCShowTestResult(settingsViewController, @"Native Phenotype resync", issued,
+                    @"Called syncWithCallback: on the observed native syncer. Server success is not implied.",
+                    @"No live native syncer was observed or its ABI does not match.");
+                return YES;
+            }];
+        [sectionItems addObject:nativeResync];
+
+        YTSettingsSectionItem *nativeClear = [YTSettingsSectionItemClass
+            itemWithTitle:@"Clear native experiment cache"
+            titleDescription:@"Call clearCaches on the observed YTExperimentsServiceImpl only"
+            accessibilityIdentifier:@"YTABC_NATIVE_EXPERIMENT_CACHE"
+            detailTextBlock:nil
+            selectBlock:^BOOL (YTSettingsCell *cell, NSUInteger argument) {
+                (void)cell; (void)argument;
+                BOOL issued = YTABCClearNativeExperimentsCaches();
+                YTABCShowTestResult(settingsViewController, @"Native experiments cache", issued,
+                    @"Called clearCaches on the observed native experiments service.",
+                    @"No native experiments service observed. Open Search Experiments first.");
+                return YES;
+            }];
+        [sectionItems addObject:nativeClear];
+
+
+        // Phenotype/InnerTube test switches from an older draft were removed:
+        // their declared callback implementations did not exist in this branch.
+        // Keep only the verified native UI openers and diagnostics.
     }
 
     YTSettingsSectionItem *thread = [YTSettingsSectionItemClass itemWithTitle:LOC(@"OPEN_MEGATHREAD")
@@ -273,8 +528,8 @@ BOOL YTABResetAllRuntimeOverrides(
 
     if (tweakEnabled()) {
         NSString *titleDescription = [NSString stringWithFormat:
-            @"Afterglow Labs Feature Lab %@ • %d runtime flags",
-            @(OS_STRINGIFY(TWEAK_VERSION)), totalSettings];
+            @"Afterglow Labs Feature Lab %@ • live flags load on demand",
+            @(OS_STRINGIFY(TWEAK_VERSION))];
         YTSettingsSectionItem *info = [YTSettingsSectionItemClass itemWithTitle:nil
             titleDescription:titleDescription
             accessibilityIdentifier:nil
@@ -318,6 +573,11 @@ BOOL YTABResetAllRuntimeOverrides(
 }
 
 - (void)updateSectionForCategory:(NSUInteger)category withEntry:(id)entry {
+    sYTABCLiveSectionItemManager = self;
+    // Observe whether YouTube actually asks to construct categories 30/37.
+    // Do not generate entries for missing or account-gated sections.
+    extern void YTABCRecordSettingsCategoryUpdate(NSUInteger, id);
+    YTABCRecordSettingsCategoryUpdate(category, entry);
     if (category == YTABCSection) {
         [self updateYTABCSectionWithEntry:entry];
         return;
@@ -336,13 +596,16 @@ void SearchHook() {
 
 %ctor {
     defaults = [NSUserDefaults standardUserDefaults];
-    [defaults registerDefaults:@{EnabledKey: @YES}];
+    prefixLength = [Prefix length];
+    keyCache = [NSMutableDictionary new];
 
-    pthread_mutexattr_t attr;
-    pthread_mutexattr_init(&attr);
-    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-    pthread_mutex_init(&cacheMutex, &attr);
-    pthread_mutexattr_destroy(&attr);
+    pthread_mutexattr_t attributes;
+    pthread_mutexattr_init(&attributes);
+    pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&cacheMutex, &attributes);
+    pthread_mutexattr_destroy(&attributes);
+
+    YTABCRuntimeRegistryStart(defaults);
 
     %init;
 }
