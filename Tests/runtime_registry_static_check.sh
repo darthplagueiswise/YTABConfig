@@ -150,7 +150,14 @@ require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeOverrides"
 require_text YTABRuntimeBrowser.m '@"All BOOLs", @"Overrides"'
 reject_text YTABRuntimeBrowser.m '@"Flags", @"Methods", @"Overrides"'
 require_text YTABRuntimeBrowser.m 'YTABRuntimeImageScopeAll'
-require_text YTABRuntimeBrowser.m 'YTABRuntimeImageScopeAll : YTABRuntimeImageScopeOverrides'
+require_text YTABRuntimeBrowser.m 'YTABRuntimeStartAutomaticIndex();'
+require_text YTABRuntimeBrowser.m 'YTABRuntimeAutoIndexNotification'
+require_text YTABRuntimeBrowser.m '"newMethods": batch'
+require_text YTABRuntimeBrowser.m 'QOS_CLASS_UTILITY'
+require_text YTABRuntimeBrowser.m 'sYTABRuntimeAutomaticIndexStarted'
+require_text YTABRuntimeBrowser.m 'onBatch(pendingBatch.copy)'
+require_text YTABRuntimeBrowser.m '- (void)ytab_autoIndexUpdated:(NSNotification *)notification'
+require_text YTABRuntimeBrowser.m '[self applyFilter]; // includes the current search text and category'
 require_text YTABRuntimeBrowser.m "YTABCRuntimeValuesSnapshot()"
 require_text YTABRuntimeBrowser.m "YTABCNativeValue(cls, selector)"
 require_text YTABRuntimeBrowser.m "YTABCOverrideValue(cls, selector)"
@@ -285,7 +292,9 @@ reject_text YTABRuntimeBrowser.m '"partialMethods": snapshot'
 require_text YTABRuntimeBrowser.m "YTABRuntimeMergeCatalogs(captured, stored)"
 require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeFlags, nil, nil"
 require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeOverrides, nil, nil"
-require_text YTABRuntimeBrowser.m "YTABRuntimeImageScopeAll, category, cancelled"
+require_text YTABRuntimeBrowser.m 'YTABRuntimeImageScopeAll, @"Runtime", nil'
+reject_text YTABRuntimeBrowser.m 'ytab_forceFullScan'
+require_text YTABRuntimeBrowser.m 'YTABRuntimeCurrentIndexSnapshot()'
 require_text YTABRuntimeBrowser.m "sYTABRuntimeFamilyCatalog[family]"
 require_text YTABRuntimeBrowser.m "if (cancelled && cancelled()) return @[];"
 require_text YTABRuntimeBrowser.m 'BOOL limitedToFamily'
@@ -298,6 +307,17 @@ require_text YTABRuntimeBrowserModern.m 'indexRefresh'
 require_text YTABRuntimeBrowserModern.m '@selector(ytab_requestFullIndex)'
 reject_text YTABRuntimeBrowser.m 'ytabc_inventoryProgress:'
 require_text YTABRuntimeBrowser.m 'if (override) return override.boolValue;'
+# Config and parameter rows remain grouped visually in ONE UIKit section,
+# keeping the category strip pinned while retaining override-first priority.
+require_text YTABRuntimeBrowser.m 'YTABRuntimeConfigGroupTitle'
+require_text YTABRuntimeBrowser.m 'rangeOfString:@"__"'
+require_text YTABRuntimeBrowser.m 'self.visibleRows = display.copy;'
+require_text YTABRuntimeBrowser.m '[display addObject:group];'
+require_text YTABRuntimeBrowser.m 'return (NSInteger)self.visibleRows.count;'
+require_text YTABRuntimeBrowserModern.m 'YTABCBooleanConfigHeader'
+require_text YTABRuntimeBrowserModern.m 'ytab_rowAtIndexPath:'
+require_text YTABRuntimeBrowserModern.m 'if (!method) return; // Config/group heading'
+
 override_short_circuits="$(grep -Fc 'if (override) return override.boolValue;' YTABRuntimeBrowser.m)"
 if [[ "$override_short_circuits" -ne 3 ]]; then
     echo "all three generic BOOL hook signatures must short-circuit local overrides" >&2
