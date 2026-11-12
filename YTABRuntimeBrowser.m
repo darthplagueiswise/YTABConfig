@@ -712,16 +712,33 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeMergeCatalogs(
     return result.copy;
 }
 
-// Group parameters under their owning config when the selector exposes an
-// explicit ConfigName__parameter boundary. Otherwise the original ObjC class
-// is the only reliable source grouping; never invent config IDs.
-static NSString *YTABRuntimeConfigGroupTitle(YTABRuntimeMethod *method) {
+// Prefer an explicit ConfigName__parameter boundary. For snake_case
+// phenotype selectors, group a common two-token prefix ONLY when at least
+// two selectors in that same class share it (e.g. app_switching_*).
+// This is visual organization, not an invented config/server identifier.
+static NSString *YTABRuntimePotentialConfigPrefix(YTABRuntimeMethod *method) {
     NSString *selector = method.selectorName ?: @"";
-    NSRange separator = [selector rangeOfString:@"__"];
-    if (separator.location != NSNotFound && separator.location > 1 &&
-        separator.location < 90) {
-        NSString *config = [selector substringToIndex:separator.location];
-        return [NSString stringWithFormat:@"%@ · %@", config, method.className];
+    NSRange explicit = [selector rangeOfString:@"__"];
+    if (explicit.location != NSNotFound && explicit.location > 1 &&
+        explicit.location < 90)
+        return [selector substringToIndex:explicit.location];
+    NSArray<NSString *> *parts = [selector componentsSeparatedByString:@"_"];
+    if (parts.count < 3 || ![parts[0] length] || ![parts[1] length]) return nil;
+    NSCharacterSet *upper = [NSCharacterSet uppercaseLetterCharacterSet];
+    if ([parts[0] rangeOfCharacterFromSet:upper].location != NSNotFound ||
+        [parts[1] rangeOfCharacterFromSet:upper].location != NSNotFound)
+        return nil;
+    return [NSString stringWithFormat:@"%@_%@", parts[0], parts[1]];
+}
+static NSString *YTABRuntimeConfigGroupTitle(
+    YTABRuntimeMethod *method, NSDictionary<NSString *, NSNumber *> *prefixCounts) {
+    NSString *prefix = YTABRuntimePotentialConfigPrefix(method);
+    if (prefix.length) {
+        BOOL explicit = [method.selectorName containsString:@"__"];
+        NSString *key = [NSString stringWithFormat:@"%@#%@",
+                          method.className, prefix];
+        if (explicit || [prefixCounts[key] unsignedIntegerValue] >= 2)
+            return [NSString stringWithFormat:@"%@ · %@", prefix, method.className];
     }
     return method.className.length ? method.className : @"Unknown origin";
 }
@@ -888,11 +905,19 @@ static NSString *YTABRuntimeConfigGroupTitle(YTABRuntimeMethod *method) {
     // while lightweight label rows visually bind parameters of each config.
     // Groups containing active overrides occur first; the first appearance
     // of each group establishes its stable display position.
+    NSMutableDictionary<NSString *, NSNumber *> *prefixCounts =
+        [NSMutableDictionary dictionary];
+    for (YTABRuntimeMethod *method in self.visibleMethods) {
+        NSString *prefix = YTABRuntimePotentialConfigPrefix(method);
+        if (!prefix.length) continue;
+        NSString *key = [NSString stringWithFormat:@"%@#%@", method.className, prefix];
+        prefixCounts[key] = @([prefixCounts[key] unsignedIntegerValue] + 1);
+    }
     NSMutableDictionary<NSString *, NSMutableArray<YTABRuntimeMethod *> *> *groups =
         [NSMutableDictionary dictionary];
     NSMutableArray<NSString *> *groupOrder = [NSMutableArray array];
     for (YTABRuntimeMethod *method in self.visibleMethods) {
-        NSString *group = YTABRuntimeConfigGroupTitle(method);
+        NSString *group = YTABRuntimeConfigGroupTitle(method, prefixCounts);
         NSMutableArray<YTABRuntimeMethod *> *members = groups[group];
         if (!members) {
             members = [NSMutableArray array];
