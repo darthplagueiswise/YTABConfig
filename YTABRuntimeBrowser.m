@@ -506,9 +506,9 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(
             if (!className.length || (limitedToFamily &&
                 ![YTABRuntimeFamilyForClassName(className) isEqualToString:family]))
                 continue;
-            Class cls = objc_getClass(name);
-            if (cls && YTABRuntimeIsMainExecutableClass(cls))
-                [candidates addObject:className];
+            // objc_copyClassNamesForImage already restricts this list to
+            // the YouTube image; resolve each class only once during scan.
+            [candidates addObject:className];
         }
     } else {
         unsigned int classCount = 0;
@@ -533,8 +533,9 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(
         // No per-class main-thread notifications. UI already shows the
         // native snapshot while background indexing runs.
         if (!className.length || YTABRuntimeClassExcluded(className)) continue;
+        @autoreleasepool {
         Class cls = NSClassFromString(className);
-        if (!cls || !YTABRuntimeIsMainExecutableClass(cls)) continue;
+        if (!cls) continue;
         for (NSUInteger pass = 0; pass < 2; pass++) {
             BOOL isClassMethod = pass == 1;
             Class owner = isClassMethod ? object_getClass(cls) : cls;
@@ -563,6 +564,7 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(
             }
             if (methods) free(methods);
         }
+        } // per-class autorelease pool; avoid retaining huge temporary strings
         // Emit bounded DELTAS, never a growing copy of the full catalog.
         // Each dispatch is independent of current category and search text.
         if (onBatch && pendingBatch.count &&
