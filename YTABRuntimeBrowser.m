@@ -710,6 +710,21 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeMergeCatalogs(
     return result.copy;
 }
 
+// Group parameters under their owning config when the selector exposes an
+// explicit ConfigName__parameter boundary. Otherwise the original ObjC class
+// is the only reliable source grouping; never invent config IDs.
+static NSString *YTABRuntimeConfigGroupTitle(YTABRuntimeMethod *method) {
+    NSString *selector = method.selectorName ?: @"";
+    NSRange separator = [selector rangeOfString:@"__"];
+    if (separator.location != NSNotFound && separator.location > 1 &&
+        separator.location < 90) {
+        NSString *config = [selector substringToIndex:separator.location];
+        return [NSString stringWithFormat:@"%@ · %@", config, method.className];
+    }
+    return method.className.length ? method.className : @"Unknown origin";
+}
+
+
 @implementation YTABRuntimeBrowserViewController
 
 - (instancetype)init {
@@ -818,20 +833,6 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeMergeCatalogs(
 
 - (NSString *)ytab_currentSearchText {
     return self.searchController.searchBar.text ?: @"";
-}
-
-// Group parameters under their owning config when the selector exposes an
-// explicit ConfigName__parameter boundary. Otherwise the original ObjC class
-// is the only reliable source grouping; never invent config IDs.
-static NSString *YTABRuntimeConfigGroupTitle(YTABRuntimeMethod *method) {
-    NSString *selector = method.selectorName ?: @"";
-    NSRange separator = [selector rangeOfString:@"__"];
-    if (separator.location != NSNotFound && separator.location > 1 &&
-        separator.location < 90) {
-        NSString *config = [selector substringToIndex:separator.location];
-        return [NSString stringWithFormat:@"%@ · %@", config, method.className];
-    }
-    return method.className.length ? method.className : @"Unknown origin";
 }
 
 - (void)applyFilter {
