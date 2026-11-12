@@ -624,7 +624,8 @@ static NSArray<NSString *> *YTABRuntimeSearchTokens(NSString *query) {
 @property(nonatomic, strong) UISearchController *searchController;
 @property(nonatomic, strong) UISegmentedControl *scopeControl;
 @property(nonatomic, copy) NSString *ytab_selectedCategory;
-@property(nonatomic) NSUInteger scanGeneration;
+@property(atomic) NSUInteger scanGeneration;
+@property(nonatomic) BOOL ytab_forceFullScan;
 @property(nonatomic, strong) UILabel *scanProgressLabel;
 @end
 
@@ -689,68 +690,100 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
     [self loadMethods];
 }
 
+// Snapshot of native config results and saved local overrides, without an
+// exhaustive binary scan. This is the only work required for first paint.
+static NSArray<YTABRuntimeMethod *> *YTABRuntimeMergeCatalogs(
+    NSArray<YTABRuntimeMethod *> *first,
+    NSArray<YTABRuntimeMethod *> *second) {
+    NSMutableArray<YTABRuntimeMethod *> *result = [NSMutableArray array];
+    NSMutableSet<NSString *> *keys = [NSMutableSet set];
+    for (NSArray<YTABRuntimeMethod *> *group in @[first ?: @[], second ?: @[]]) {
+        for (YTABRuntimeMethod *method in group) {
+            if (![keys containsObject:method.patchKey]) {
+                [keys addObject:method.patchKey];
+                [result addObject:method];
+            }
+        }
+    }
+    return result.copy;
+}
+
 - (void)loadMethods {
     NSUInteger generation = ++self.scanGeneration;
-    self.allMethods = @[];
-    self.visibleMethods = @[];
-    [self.tableView reloadData];
-
-    UIView *loading = [[UIView alloc] initWithFrame:self.tableView.bounds];
-    UIActivityIndicatorView *indicator = [[UIActivityIndicatorView alloc]
-        initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
-    [indicator startAnimating];
-    UILabel *hint = [UILabel new];
-    hint.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
-    hint.textColor = UIColor.secondaryLabelColor;
-    hint.textAlignment = NSTextAlignmentCenter;
-    hint.numberOfLines = 0;
-    hint.text = self.scopeControl.selectedSegmentIndex == 0
-        ? @"Loading native Boolean controls…"
-        : @"Loading active local overrides…";
-    UIStackView *progress = [[UIStackView alloc] initWithArrangedSubviews:@[indicator, hint]];
-    progress.axis = UILayoutConstraintAxisVertical;
-    progress.alignment = UIStackViewAlignmentCenter;
-    progress.spacing = 14;
-    progress.translatesAutoresizingMaskIntoConstraints = NO;
-    [loading addSubview:progress];
-    [NSLayoutConstraint activateConstraints:@[
-        [progress.centerXAnchor constraintEqualToAnchor:loading.centerXAnchor],
-        [progress.centerYAnchor constraintEqualToAnchor:loading.centerYAnchor],
-        [progress.leadingAnchor constraintGreaterThanOrEqualToAnchor:loading.leadingAnchor constant:28],
-        [progress.trailingAnchor constraintLessThanOrEqualToAnchor:loading.trailingAnchor constant:-28],
-    ]];
-    self.tableView.backgroundView = loading;
-    self.scanProgressLabel = hint;
-
-    YTABRuntimeImageScope scope = self.scopeControl.selectedSegmentIndex == 0
-        ? YTABRuntimeImageScopeAll : YTABRuntimeImageScopeOverrides;
+    NSString *category = self.ytab_selectedCategory ?: @"Runtime";
+    BOOL overridesOnly = self.scopeControl.selectedSegmentIndex == 1;
+    // Config flags have a separate original-return cache and do not need a
+    // generic scan. Native families are scanned only when explicitly chosen.
+    BOOL isConfigCategory = [@[@"ColdConfig", @"HotConfig", @"GlobalConfig"]
+        containsObject:category];
+    BOOL deepScan = !overridesOnly && !isConfigCategory &&
+        (![category isEqualToString:@"Runtime"] || self.ytab_forceFullScan);
+    self.tableView.backgroundView = nil;
+    self.scanProgressLabel = nil;
     __weak typeof(self) weakSelf = self;
-    dispatch_queue_t queue = scope == YTABRuntimeImageScopeAll
-        ? YTABRuntimeInventoryQueue()
-        : dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
-    dispatch_async(queue, ^{
-        NSArray<YTABRuntimeMethod *> *methods = YTABRuntimeDiscoverMethods(scope);
+
+    dispatch_async(YTABRuntimeInventoryQueue(), ^{
+        // Fast stage: read already captured native config values and the
+        // small set of saved patches. Never enumerate YouTube classes here.
+        NSArray *captured = YTABRuntimeDiscoverMethods(
+            YTABRuntimeImageScopeFlags, nil, nil);
+        NSArray *stored = YTABRuntimeDiscoverMethods(
+            YTABRuntimeImageScopeOverrides, nil, nil);
+        NSArray *fast = YTABRuntimeMergeCatalogs(captured, stored);
         dispatch_async(dispatch_get_main_queue(), ^{
-            __strong typeof(weakSelf) strongSelf = weakSelf;
-            if (!strongSelf || generation != strongSelf.scanGeneration) return;
-            strongSelf.tableView.backgroundView = nil;
-            strongSelf.scanProgressLabel = nil;
-            strongSelf.allMethods = methods;
-            [strongSelf applyFilter];
-            if (!methods.count) {
-                UILabel *empty = [UILabel new];
-                empty.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
-                empty.textColor = UIColor.secondaryLabelColor;
-                empty.numberOfLines = 0;
-                empty.textAlignment = NSTextAlignmentCenter;
-                empty.text = scope == YTABRuntimeImageScopeOverrides
-                    ? @"No local overrides. Choose a Boolean control to force ON or OFF."
-                    : @"No compatible Boolean controls were found in the current app process.";
-                strongSelf.tableView.backgroundView = empty;
+            __strong typeof(weakSelf) owner = weakSelf;
+            if (!owner || owner.scanGeneration != generation) return;
+            owner.allMethods = fast;
+            [owner applyFilter];
+            if (deepScan && !owner.visibleMethods.count) {
+                UILabel *hint = [UILabel new];
+                hint.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+                hint.textColor = UIColor.secondaryLabelColor;
+                hint.textAlignment = NSTextAlignmentCenter;
+                hint.numberOfLines = 0;
+                hint.text = [NSString stringWithFormat:
+                    @"Indexing %@ native getters in the background. Original values appear only after an actual native invocation.",
+                    category];
+                owner.tableView.backgroundView = hint;
             }
+        });
+        if (!deepScan) return;
+        // Allow the quick snapshot to reach UIKit before the low-priority
+        // scan; any category change invalidates the previous generation.
+        BOOL (^cancelled)(void) = ^BOOL {
+            __strong typeof(weakSelf) owner = weakSelf;
+            return !owner || owner.scanGeneration != generation;
+        };
+        if (cancelled()) return;
+        NSArray *discovered = YTABRuntimeDiscoverMethods(
+            YTABRuntimeImageScopeAll, category, cancelled);
+        if (cancelled()) return;
+        NSArray *combined = YTABRuntimeMergeCatalogs(fast, discovered);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) owner = weakSelf;
+            if (!owner || owner.scanGeneration != generation) return;
+            owner.allMethods = combined;
+            owner.tableView.backgroundView = nil;
+            [owner applyFilter];
+            [owner.tableView.refreshControl endRefreshing];
         });
     });
 }
+
+// Full image scan is explicitly requested by pull-to-refresh or a search.
+// Runtime's initial screen never performs this expensive operation.
+- (void)ytab_requestFullIndex {
+    if (self.scopeControl.selectedSegmentIndex != 0) return;
+    if ([self.ytab_selectedCategory isEqualToString:@"Runtime"]) {
+        if (self.ytab_forceFullScan) {
+            [self.tableView.refreshControl endRefreshing];
+            return;
+        }
+        self.ytab_forceFullScan = YES;
+    }
+    [self loadMethods];
+}
+
 
 - (void)ytabc_inventoryProgress:(NSNotification *)notification {
     if (self.scopeControl.selectedSegmentIndex != 0 ||
@@ -838,7 +871,7 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
     NSString *next = category.length ? category : @"Runtime";
     if ([self.ytab_selectedCategory isEqualToString:next]) return;
     self.ytab_selectedCategory = next;
-    [self applyFilter];
+    [self loadMethods]; // rapid snapshot then targeted/cancellable scan
 }
 
 - (NSArray<NSString *> *)ytab_availableCategories {
@@ -856,7 +889,14 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
 
 - (void)updateSearchResultsForSearchController:(UISearchController *)searchController {
     (void)searchController;
-    [self applyFilter];
+    // An explicit selector search is permission to index the full image.
+    // Never do so during the initial empty-search presentation.
+    if ([self.ytab_selectedCategory isEqualToString:@"Runtime"] &&
+        !self.ytab_forceFullScan && [self ytab_currentSearchText].length >= 3) {
+        [self ytab_requestFullIndex];
+    } else {
+        [self applyFilter];
+    }
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
