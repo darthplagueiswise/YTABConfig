@@ -51,6 +51,9 @@ static BOOL sYTABRuntimeSampleRefreshPending;
 static NSArray<YTABRuntimeMethod *> *sYTABRuntimeMethodCatalog;
 static NSMutableDictionary<NSString *, NSArray<YTABRuntimeMethod *> *> *sYTABRuntimeFamilyCatalog;
 static NSString *YTABRuntimeFamilyForClassName(NSString *name);
+static BOOL sYTABRuntimeAutomaticIndexStarted;
+static NSMutableArray<YTABRuntimeMethod *> *sYTABRuntimeIncrementalCatalog;
+NSString * const YTABRuntimeAutoIndexNotification = @"YTABRuntimeAutoIndexNotification";
 NSString * const YTABRuntimeNativeSampleChangedNotification = @"YTABRuntimeNativeSampleChangedNotification";
 NSString * const YTABRuntimeInventoryProgressNotification = @"YTABRuntimeInventoryProgressNotification";
 
@@ -364,7 +367,8 @@ static BOOL YTABRuntimeIsMainExecutableClass(Class cls) {
 }
 
 static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(
-    YTABRuntimeImageScope scope, NSString *family, BOOL (^cancelled)(void)) {
+    YTABRuntimeImageScope scope, NSString *family, BOOL (^cancelled)(void),
+    void (^onBatch)(NSArray<YTABRuntimeMethod *> *)) {
     if (scope == YTABRuntimeImageScopeMethods) {
         @synchronized([YTABRuntimeMethod class]) {
             if (sYTABRuntimeMethodCatalog) return sYTABRuntimeMethodCatalog;
@@ -521,6 +525,7 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(
     }
     if (imageNames) free(imageNames);
     NSUInteger scannedClasses = 0, totalClasses = candidates.count;
+    NSMutableArray<YTABRuntimeMethod *> *pendingBatch = [NSMutableArray array];
     for (NSString *className in candidates) {
         if (cancelled && cancelled()) return @[];
         scannedClasses++;
@@ -553,12 +558,19 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(
                                         method_getTypeEncoding(method) ?: ""];
                 entry.imageName = @"YouTube runtime";
                 [results addObject:entry];
+                if (onBatch) [pendingBatch addObject:entry];
             }
             if (methods) free(methods);
         }
-        // Avoid copying and sorting an expanding, multi-thousand-item
-        // inventory on the main queue every 1,200 classes.
+        // Emit bounded DELTAS, never a growing copy of the full catalog.
+        // Each dispatch is independent of current category and search text.
+        if (onBatch && pendingBatch.count &&
+            (scannedClasses % 1500 == 0 || pendingBatch.count >= 4000)) {
+            onBatch(pendingBatch.copy);
+            [pendingBatch removeAllObjects];
+        }
     }
+    if (onBatch && pendingBatch.count) onBatch(pendingBatch.copy);
     [results sortUsingComparator:^NSComparisonResult(YTABRuntimeMethod *a,
                                                        YTABRuntimeMethod *b) {
         NSComparisonResult clsResult =
@@ -587,6 +599,42 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(
         }
     }
     return complete;
+}
+
+// Exactly one automatic enumeration for this process. It starts after the
+// snapshot request has been queued, continues while any category is shown,
+// and publishes bounded method batches to any open Runtime Browser.
+static void YTABRuntimeStartAutomaticIndex(void) {
+    @synchronized([YTABRuntimeMethod class]) {
+        if (sYTABRuntimeAutomaticIndexStarted || sYTABRuntimeMethodCatalog) return;
+        sYTABRuntimeAutomaticIndexStarted = YES;
+        sYTABRuntimeIncrementalCatalog = [NSMutableArray array];
+    }
+    dispatch_async(YTABRuntimeInventoryQueue(), ^{
+        YTABRuntimeDiscoverMethods(YTABRuntimeImageScopeAll, @"Runtime", nil,
+            ^(NSArray<YTABRuntimeMethod *> *batch) {
+                @synchronized([YTABRuntimeMethod class]) {
+                    [sYTABRuntimeIncrementalCatalog addObjectsFromArray:batch];
+                }
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [[NSNotificationCenter defaultCenter]
+                        postNotificationName:YTABRuntimeAutoIndexNotification
+                        object:nil userInfo:@{@"newMethods": batch}];
+                });
+            });
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [[NSNotificationCenter defaultCenter]
+                postNotificationName:YTABRuntimeAutoIndexNotification
+                object:nil userInfo:@{@"complete": @YES}];
+        });
+    });
+}
+
+static NSArray<YTABRuntimeMethod *> *YTABRuntimeCurrentIndexSnapshot(void) {
+    @synchronized([YTABRuntimeMethod class]) {
+        return sYTABRuntimeMethodCatalog ?:
+            [sYTABRuntimeIncrementalCatalog copy] ?: @[];
+    }
 }
 
 // Groups use only native ObjC class metadata, never inferred eligibility.
@@ -634,7 +682,11 @@ static dispatch_queue_t YTABRuntimeInventoryQueue(void) {
     static dispatch_queue_t queue;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        queue = dispatch_queue_create("com.ytabconfig.runtime.inventory", DISPATCH_QUEUE_SERIAL);
+        dispatch_queue_attr_t attributes =
+            dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,
+                                                    QOS_CLASS_UTILITY, 0);
+        queue = dispatch_queue_create("com.ytabconfig.runtime.inventory",
+                                      attributes);
     });
     return queue;
 }
