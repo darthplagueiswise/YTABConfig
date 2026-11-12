@@ -49,6 +49,8 @@ static BOOL sYTABRuntimeSampleRefreshPending;
 // The generic selector inventory is immutable within the current YouTube process.
 // Cache it after its first complete scan instead of re-enumerating on every tab switch.
 static NSArray<YTABRuntimeMethod *> *sYTABRuntimeMethodCatalog;
+static NSMutableDictionary<NSString *, NSArray<YTABRuntimeMethod *> *> *sYTABRuntimeFamilyCatalog;
+static NSString *YTABRuntimeFamilyForClassName(NSString *name);
 NSString * const YTABRuntimeNativeSampleChangedNotification = @"YTABRuntimeNativeSampleChangedNotification";
 NSString * const YTABRuntimeInventoryProgressNotification = @"YTABRuntimeInventoryProgressNotification";
 
@@ -257,8 +259,11 @@ static BOOL YTABRuntimeInstallPatchKey(NSString *key) {
 }
 
 static NSNumber *YTABRuntimeOverrideForKey(NSString *key) {
-    id value = YTABRuntimeStoredOverrides()[key];
-    return [value isKindOfClass:[NSNumber class]] ? value : nil;
+    // The previous implementation rebuilt the entire NSUserDefaults
+    // dictionary for EACH row during applyFilter and table rendering.
+    // Use the immutable snapshot refreshed by every local write/restore.
+    if (!sYTABRuntimeOverrideCache) YTABRuntimeRefreshOverrideCache();
+    return YTABRuntimeCachedOverride(key);
 }
 
 static BOOL YTABRuntimeSetOverride(NSNumber *value, NSString *key) {
@@ -358,7 +363,8 @@ static BOOL YTABRuntimeIsMainExecutableClass(Class cls) {
     return [image isEqualToString:[NSBundle mainBundle].executablePath];
 }
 
-static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImageScope scope) {
+static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(
+    YTABRuntimeImageScope scope, NSString *family, BOOL (^cancelled)(void)) {
     if (scope == YTABRuntimeImageScopeMethods) {
         @synchronized([YTABRuntimeMethod class]) {
             if (sYTABRuntimeMethodCatalog) return sYTABRuntimeMethodCatalog;
@@ -444,7 +450,8 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImage
     if (scope == YTABRuntimeImageScopeAll) {
         NSArray<YTABRuntimeMethod *> *cached = nil;
         @synchronized([YTABRuntimeMethod class]) {
-            cached = sYTABRuntimeMethodCatalog;
+            cached = (!family.length || [family isEqualToString:@"Runtime"])
+                ? sYTABRuntimeMethodCatalog : sYTABRuntimeFamilyCatalog[family];
         }
         if (cached) {
             for (YTABRuntimeMethod *method in cached) {
@@ -463,16 +470,8 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImage
             }];
             return results.copy;
         }
-        // Display launch-captured flags immediately; generic getters stream
-        // into the same results list as the native image scan progresses.
-        if (results.count) {
-            NSArray *snapshot = results.copy;
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [[NSNotificationCenter defaultCenter]
-                    postNotificationName:YTABRuntimeInventoryProgressNotification
-                    object:nil userInfo:@{@"partialMethods": snapshot}];
-            });
-        }
+        // Launch-captured flags have already been published by the fast
+        // stage in loadMethods. Never send duplicate table reloads here.
     }
 
     // The generic method inventory is deliberately segregated from flags:
@@ -488,6 +487,8 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImage
     // queue. Both supplied 2026-11-11 crash logs faulted at that call.
     // Store NSString class names (retainable objects) and resolve Class only
     // when inspecting each entry. Keep the worker scan read-only.
+    BOOL limitedToFamily = (scope == YTABRuntimeImageScopeAll &&
+        family.length && ![family isEqualToString:@"Runtime"]);
     NSMutableArray<NSString *> *candidates = [NSMutableArray array];
     unsigned int imageClassCount = 0;
     const char **imageNames = objc_copyClassNamesForImage(
@@ -496,34 +497,35 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImage
         for (unsigned int index = 0; index < imageClassCount; ++index) {
             const char *name = imageNames[index];
             if (!name || !name[0]) continue;
-            Class cls = objc_getClass(name);
-            if (!cls || !YTABRuntimeIsMainExecutableClass(cls)) continue;
             NSString *className = [NSString stringWithUTF8String:name];
-            if (className.length) [candidates addObject:className];
+            if (!className.length || (limitedToFamily &&
+                ![YTABRuntimeFamilyForClassName(className) isEqualToString:family]))
+                continue;
+            Class cls = objc_getClass(name);
+            if (cls && YTABRuntimeIsMainExecutableClass(cls))
+                [candidates addObject:className];
         }
     } else {
         unsigned int classCount = 0;
         Class *classes = objc_copyClassList(&classCount);
         for (unsigned int index = 0; classes && index < classCount; ++index) {
             Class cls = classes[index];
-            if (!YTABRuntimeIsMainExecutableClass(cls)) continue;
-            NSString *className = NSStringFromClass(cls);
-            if (className.length) [candidates addObject:className];
+            NSString *className = cls ? NSStringFromClass(cls) : nil;
+            if (!className.length || (limitedToFamily &&
+                ![YTABRuntimeFamilyForClassName(className) isEqualToString:family]))
+                continue;
+            if (YTABRuntimeIsMainExecutableClass(cls))
+                [candidates addObject:className];
         }
         if (classes) free(classes);
     }
     if (imageNames) free(imageNames);
     NSUInteger scannedClasses = 0, totalClasses = candidates.count;
     for (NSString *className in candidates) {
+        if (cancelled && cancelled()) return @[];
         scannedClasses++;
-        if (scannedClasses % 250 == 0 || scannedClasses == totalClasses) {
-            NSUInteger done = scannedClasses;
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [[NSNotificationCenter defaultCenter]
-                    postNotificationName:YTABRuntimeInventoryProgressNotification
-                    object:nil userInfo:@{@"done": @(done), @"total": @(totalClasses)}];
-            });
-        }
+        // No per-class main-thread notifications. UI already shows the
+        // native snapshot while background indexing runs.
         if (!className.length || YTABRuntimeClassExcluded(className)) continue;
         Class cls = NSClassFromString(className);
         if (!cls || !YTABRuntimeIsMainExecutableClass(cls)) continue;
@@ -554,23 +556,8 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImage
             }
             if (methods) free(methods);
         }
-        // Show useful results immediately, without waiting for an entire
-        // image-wide Objective-C class scan. Snapshot at bounded intervals;
-        // the final sorted catalogue still replaces this partial view.
-        if ((scope == YTABRuntimeImageScopeMethods ||
-             scope == YTABRuntimeImageScopeAll) && results.count &&
-            (scannedClasses == 300 || (scannedClasses % 1200) == 0)) {
-            NSArray<YTABRuntimeMethod *> *snapshot = results.copy;
-            NSUInteger done = scannedClasses;
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [[NSNotificationCenter defaultCenter]
-                    postNotificationName:YTABRuntimeInventoryProgressNotification
-                    object:nil
-                    userInfo:@{@"done": @(done),
-                               @"total": @(totalClasses),
-                               @"partialMethods": snapshot}];
-            });
-        }
+        // Avoid copying and sorting an expanding, multi-thousand-item
+        // inventory on the main queue every 1,200 classes.
     }
     [results sortUsingComparator:^NSComparisonResult(YTABRuntimeMethod *a,
                                                        YTABRuntimeMethod *b) {
@@ -590,7 +577,13 @@ static NSArray<YTABRuntimeMethod *> *YTABRuntimeDiscoverMethods(YTABRuntimeImage
         for (YTABRuntimeMethod *method in complete)
             if (!method.configFlag) [generic addObject:method];
         @synchronized([YTABRuntimeMethod class]) {
-            sYTABRuntimeMethodCatalog = generic.copy;
+            if (!family.length || [family isEqualToString:@"Runtime"]) {
+                sYTABRuntimeMethodCatalog = generic.copy;
+            } else {
+                if (!sYTABRuntimeFamilyCatalog)
+                    sYTABRuntimeFamilyCatalog = [NSMutableDictionary dictionary];
+                sYTABRuntimeFamilyCatalog[family] = generic.copy;
+            }
         }
     }
     return complete;
